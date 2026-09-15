@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Joe's Hand</title>
+<style>
+  :root { --bg: #f2f2f7; --card: #fff; --text: #111; --muted: #8e8e93;
+          --accent: #0a84ff; --ok: #34c759; --bad: #ff3b30; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; padding-top: max(16px, env(safe-area-inset-top));
+         background: var(--bg); color: var(--text);
+         font-family: -apple-system, system-ui, sans-serif;
+         -webkit-user-select: none; user-select: none;
+         -webkit-tap-highlight-color: transparent; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           margin: 4px 2px 12px; }
+  h1 { font-size: 1.35em; margin: 0; }
+  #conn { font-size: .8em; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+          background: var(--bad); color: #fff; }
+  #conn.ok { background: var(--ok); }
+  .finger { background: var(--card); border-radius: 14px; padding: 12px 16px 6px;
+            margin-bottom: 10px; }
+  .label { display: flex; justify-content: space-between; font-weight: 600; }
+  .label span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; height: 44px; margin: 0; accent-color: var(--accent); }
+  button { width: 100%; padding: 14px; margin-top: 6px; border: 0; border-radius: 14px;
+           background: var(--accent); color: #fff; font-size: 1.05em; font-weight: 600; }
+  button:active { opacity: .7; }
+  button:disabled { opacity: .4; }
+  .hint { color: var(--muted); font-size: .8em; text-align: center; margin-top: 12px; }
+</style>
+</head>
+<body>
+<header><h1>Joe's Hand</h1><span id="conn">offline</span></header>
+<div id="fingers"></div>
+<button id="anim" disabled>Play animation</button>
+<p class="hint">0% = open, 100% = fully curled</p>
+<script>
+const NAMES = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+const SEND_MS = 33;        // at most ~30 messages/s; newest value wins
+const KEEPALIVE_MS = 500;  // resend while idle: the ESP32 opens the hand after 2 s of silence
+const vals = [0, 0, 0, 0, 0];
+const sliders = [], readouts = [];
+let ws = null, synced = false, dirty = false, lastSent = 0;
+
+const box = document.getElementById('fingers');
+NAMES.forEach((name, i) => {
+  const d = document.createElement('div');
+  d.className = 'finger';
+  d.innerHTML = `<div class="label"><span>${name}</span><span>0%</span></div>
+                 <input type="range" min="0" max="100" value="0">`;
+  readouts[i] = d.querySelector('.label span:last-child');
+  sliders[i] = d.querySelector('input');
+  sliders[i].addEventListener('input', () => {
+    vals[i] = +sliders[i].value;
+    readouts[i].textContent = vals[i] + '%';
+    dirty = true;
+  });
+  box.appendChild(d);
+});
+
+function show(newVals) {
+  newVals.forEach((v, i) => {
+    vals[i] = v;
+    sliders[i].value = v;
+    readouts[i].textContent = v + '%';
+  });
+}
+
+const conn = document.getElementById('conn');
+const animBtn = document.getElementById('anim');
+function setOnline(on) {
+  conn.textContent = on ? 'connected' : 'offline';
+  conn.className = on ? 'ok' : '';
+  animBtn.disabled = !on;
+}
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => setOnline(true);
+  // The ESP32 sends the hand's actual position on connect, after the
+  // animation, and when its watchdog opens the hand. Nothing is sent
+  // until that first sync, so a fresh page can't yank the fingers.
+  ws.onmessage = (e) => {
+    const p = String(e.data).split(',').map(Number);
+    if (p.length === 5 && p.every(v => v >= 0 && v <= 100)) {
+      show(p);
+      synced = true;
+      dirty = false;
+    }
+  };
+  ws.onclose = () => {
+    setOnline(false);
+    synced = false;
+    setTimeout(connect, 1000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+// Throttle: one tick every SEND_MS. Send the latest values if they
+// changed (or as a keepalive); if the previous frame is still queued,
+// skip this tick rather than pile up stale frames.
+setInterval(() => {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !synced) return;
+  if (ws.bufferedAmount > 0) return;
+  const now = performance.now();
+  if (dirty || now - lastSent >= KEEPALIVE_MS) {
+    ws.send(vals.join(','));
+    dirty = false;
+    lastSent = now;
+  }
+}, SEND_MS);
+
+animBtn.addEventListener('click', () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send('A');
+    show([0, 0, 0, 0, 0]);  // the animation ends with the hand open
+    dirty = false;
+  }
+});
+
+connect();
+</script>
+</body>
+</html>
