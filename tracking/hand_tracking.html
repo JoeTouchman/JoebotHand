@@ -2,13 +2,17 @@
 <!--
   Hand tracking dev harness - MediaPipe HandLandmarker in the browser.
   Computes a 0.0 (extended) .. 1.0 (curled) value per finger from 3D joint
-  angles, with per-finger calibration and EMA smoothing. Not connected to
-  the ESP32 yet.
+  angles, with per-finger calibration and EMA smoothing, and can stream the
+  smoothed values to the hand over its websocket (ws://192.168.4.1/ws).
 
   Run (from the RoboticHand folder, so the local model file is found):
       python3 -m http.server 8765
   then open  http://localhost:8765/tracking/hand_tracking.html
   (localhost counts as a secure origin, so the camera is allowed.)
+
+  Driving the hand means joining the "JOES-HAND" WiFi, which has no
+  internet. Run tracking/fetch_vendor.sh once while online so MediaPipe
+  loads from tracking/vendor/ instead of the CDN.
 -->
 <html lang="en">
 <head>
@@ -17,7 +21,8 @@
 <title>Hand Tracking Harness</title>
 <style>
   :root { --bg: #0f1115; --panel: #181b21; --line: #2a2f38; --text: #e8eaed;
-          --muted: #8b93a1; --accent: #4c8dff; --raw: #8b93a1; --good: #3ecf8e; --bad: #ff5c5c; }
+          --muted: #8b93a1; --accent: #4c8dff; --raw: #8b93a1; --good: #3ecf8e;
+          --warn: #f5b942; --bad: #ff5c5c; }
   * { box-sizing: border-box; }
   body { margin: 0; padding: 16px; background: var(--bg); color: var(--text);
          font: 13px/1.4 -apple-system, system-ui, sans-serif; }
@@ -28,11 +33,14 @@
   #status.err { color: var(--bad); font-weight: 600; }
   main { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(360px, 1fr); gap: 16px; }
   @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
   canvas { width: 100%; height: auto; display: block; border-radius: 6px; background: #000; }
   .controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 10px; }
-  select, button { background: #232730; color: var(--text); border: 1px solid var(--line);
-                   border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  select, button, input[type=text] { background: #232730; color: var(--text); border: 1px solid var(--line);
+                   border-radius: 6px; padding: 4px 8px; font: inherit; }
+  button { cursor: pointer; }
   button:hover { border-color: var(--accent); }
   input[type=range] { accent-color: var(--accent); }
   .finger { padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -55,6 +63,22 @@
   textarea { width: 100%; height: 80px; margin-top: 8px; background: #0b0d11; color: var(--text);
              border: 1px solid var(--line); border-radius: 6px; font: 11px ui-monospace, monospace; }
   .help { color: var(--muted); font-size: 11px; margin-top: 10px; }
+  /* hand link */
+  .linkrow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 8px; }
+  #wsUrl { flex: 1; min-width: 180px; font-family: ui-monospace, monospace; }
+  #connectBtn { min-width: 96px; font-weight: 600; }
+  .pill { padding: 2px 10px; border-radius: 999px; font-weight: 600; background: #2a2f38; color: var(--muted); }
+  .pill.ok { background: var(--good); color: #062b1b; }
+  .pill.warn { background: var(--warn); color: #3a2800; }
+  .pill.err { background: var(--bad); color: #fff; }
+  .toggle { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; cursor: pointer; }
+  #liveHint.frozen { color: var(--warn); font-weight: 600; }
+  #liveHint.idle { color: var(--muted); }
+  .sent { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 6px 0; }
+  .sent div { background: #0b0d11; border-radius: 6px; padding: 4px; text-align: center; }
+  .sent small { display: block; color: var(--muted); font-size: 10px; }
+  .sent b { font-size: 18px; font-variant-numeric: tabular-nums; }
+  #sentLog { margin: 4px 0 0; padding: 0; list-style: none; font: 11px ui-monospace, monospace; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -84,23 +108,59 @@
     </p>
   </section>
 
-  <section class="panel">
-    <div id="fingers"></div>
-    <div class="legend"><i style="background:var(--accent)"></i> smoothed &nbsp;
-      <i style="background:var(--raw)"></i> raw (unsmoothed)</div>
-    <div class="controls">
-      <button id="copyCal">Copy calibration JSON</button>
-      <button id="resetCal">Reset calibration</button>
-    </div>
-    <textarea id="calOut" readonly></textarea>
-  </section>
+  <div class="col">
+    <section class="panel">
+      <h2>Hand link</h2>
+      <div class="linkrow">
+        <input id="wsUrl" type="text" value="ws://192.168.4.1/ws" spellcheck="false">
+        <button id="connectBtn">Connect</button>
+      </div>
+      <div class="linkrow">
+        <span id="linkStatus" class="pill">disconnected</span>
+        <label class="toggle" title="Space bar toggles"><input type="checkbox" id="live" checked> Live</label>
+        <span id="liveHint" class="stat idle">not connected</span>
+      </div>
+      <div class="linkrow stat">
+        <span>send rate <b id="sendHz">0</b> Hz</span>
+        <span>dropped (in flight) <b id="dropped">0</b></span>
+        <span>ESP32 reports <b id="espState">–</b></span>
+      </div>
+      <div class="sent" id="sentGrid"></div>
+      <div class="stat">last sent <b id="sentAge">–</b></div>
+      <ol id="sentLog"></ol>
+      <p class="help">Sends the smoothed curls (0-100) at most 30 times a second; the newest
+        value wins and nothing queues. Uncheck <b>Live</b> (or press Space) to freeze the hand:
+        the last pose is resent every 500 ms so the ESP32's 2 s watchdog keeps holding it.
+        No hand in view → nothing is sent, and the watchdog opens the hand after 2 s.</p>
+    </section>
+
+    <section class="panel">
+      <div id="fingers"></div>
+      <div class="legend"><i style="background:var(--accent)"></i> smoothed &nbsp;
+        <i style="background:var(--raw)"></i> raw (unsmoothed)</div>
+      <div class="controls">
+        <button id="copyCal">Copy calibration JSON</button>
+        <button id="resetCal">Reset calibration</button>
+      </div>
+      <textarea id="calOut" readonly></textarea>
+    </section>
+  </div>
 </main>
 
 <script type="module">
-import { FilesetResolver, HandLandmarker } from
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
+// MediaPipe: local copy first (tracking/vendor/, from fetch_vendor.sh - needed
+// while on the hand's WiFi, which has no internet), CDN as a fallback.
+const MP_VERSION = '1.0.1';
+const MP_LOCAL = `./vendor/tasks-vision-${MP_VERSION}`;
+const MP_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
+async function loadMediaPipe() {
+  try {
+    return { mp: await import(`${MP_LOCAL}/vision_bundle.esm.js`), base: MP_LOCAL, where: 'local' };
+  } catch (e) {
+    return { mp: await import(`${MP_CDN}/vision_bundle.mjs`), base: MP_CDN, where: 'CDN' };
+  }
+}
 
-const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
 // Local copy first (same file as Google's float16/1 model), hosted copy as fallback.
 const MODEL_URLS = [
   '../hand_landmarker.task',
@@ -260,12 +320,13 @@ camSel.addEventListener('change', () => startCamera(camSel.value).catch((e) => s
 
 // ---------- model ----------
 async function createLandmarker() {
-  const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+  const { mp, base, where } = await loadMediaPipe();
+  const fileset = await mp.FilesetResolver.forVisionTasks(`${base}/wasm`);
   let lastErr;
   for (const modelAssetPath of MODEL_URLS) {
     for (const delegate of ['GPU', 'CPU']) {
       try {
-        const lm = await HandLandmarker.createFromOptions(fileset, {
+        const lm = await mp.HandLandmarker.createFromOptions(fileset, {
           baseOptions: { modelAssetPath, delegate },
           runningMode: 'VIDEO',
           numHands: 1,
@@ -273,7 +334,7 @@ async function createLandmarker() {
           minHandPresenceConfidence: 0.5,
           minTrackingConfidence: 0.5,
         });
-        return { lm, info: `${delegate}, ${modelAssetPath.startsWith('http') ? 'hosted' : 'local'} model` };
+        return { lm, info: `${delegate}, MediaPipe ${where}, ${modelAssetPath.startsWith('http') ? 'hosted' : 'local'} model` };
       } catch (e) { lastErr = e; }
     }
   }
@@ -348,6 +409,7 @@ function frame(now) {
       r.barSm.style.width = (smN * 100).toFixed(1) + '%';
     });
     handPresent = true;
+    setLatestCurls(curls);  // smoothed values for the hand link
     const hd = res.handedness && res.handedness[0] && res.handedness[0][0];
     handEl.textContent = hd ? `${hd.categoryName} ${(hd.score * 100).toFixed(0)}%` : 'yes';
   } else {
@@ -359,8 +421,141 @@ function frame(now) {
   inferEl.textContent = inferMs.toFixed(1);
 }
 
-// Dev handle for poking at the math from the console.
-window.harness = { fingerAngles, normalize, get cal() { return cal; }, get smoothed() { return smoothed; } };
+// ---------- hand link: websocket to the ESP32 ----------
+// Message format is the one the phone UI uses: five integers 0-100, % curled,
+// thumb..pinky, e.g. "12,80,75,90,40".
+const SEND_INTERVAL_MS = 33;      // at most ~30 messages/s
+const KEEPALIVE_MS = 500;         // resend unchanged or frozen values this often (ESP32 watchdog: 2 s)
+const FRESH_MS = 250;             // tracking result older than this counts as "no hand"
+const BACKOFF_MIN_MS = 500, BACKOFF_MAX_MS = 8000;
+const CONNECT_TIMEOUT_MS = 3000;  // give up on a connect attempt that hangs
+
+const wsUrlEl = $('wsUrl'), connectBtn = $('connectBtn'), linkStatusEl = $('linkStatus');
+const liveEl = $('live'), liveHintEl = $('liveHint'), sendHzEl = $('sendHz'), droppedEl = $('dropped');
+const espStateEl = $('espState'), sentAgeEl = $('sentAge'), sentLogEl = $('sentLog');
+const sentGrid = FINGERS.map((name) => {
+  const d = document.createElement('div');
+  d.innerHTML = `<small>${name}</small><b>–</b>`;
+  $('sentGrid').appendChild(d);
+  return d.querySelector('b');
+});
+
+let ws = null, wantConnected = false, backoff = BACKOFF_MIN_MS, attempt = 0;
+let retryTimer = null, connectTimer = null;
+let latestCurls = null, latestCurlsT = 0;  // newest smoothed curls (0..1) and when they were computed
+let lastSent = null, lastSentT = 0, dropped = 0;
+const sendTimes = [];                      // send timestamps within the last second
+const sentLog = [];                        // last five messages sent
+
+function setLatestCurls(curls) { latestCurls = curls.slice(); latestCurlsT = performance.now(); }
+
+function setLink(kind, text) { linkStatusEl.className = 'pill ' + kind; linkStatusEl.textContent = text; }
+
+function openSocket() {
+  clearTimeout(retryTimer);
+  attempt++;
+  setLink('warn', attempt > 1 ? `connecting… (try ${attempt})` : 'connecting…');
+  let sock;
+  try {
+    sock = new WebSocket(wsUrlEl.value.trim());
+  } catch (e) {
+    wantConnected = false;
+    connectBtn.textContent = 'Connect';
+    setLink('err', 'bad URL');
+    return;
+  }
+  ws = sock;
+  connectTimer = setTimeout(() => { if (sock.readyState === WebSocket.CONNECTING) sock.close(); }, CONNECT_TIMEOUT_MS);
+  sock.onopen = () => {
+    clearTimeout(connectTimer);
+    backoff = BACKOFF_MIN_MS;
+    attempt = 0;
+    setLink('ok', 'connected');
+  };
+  // The ESP32 reports the hand's actual position on connect, after an
+  // animation, and when its watchdog opens the hand.
+  sock.onmessage = (e) => { espStateEl.textContent = String(e.data); };
+  sock.onclose = () => {
+    clearTimeout(connectTimer);
+    if (ws === sock) ws = null;
+    if (!wantConnected) { setLink('', 'disconnected'); return; }
+    const delay = backoff;
+    backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
+    setLink('err', `lost - retrying in ${(delay / 1000).toFixed(1)} s`);
+    retryTimer = setTimeout(openSocket, delay);
+  };
+}
+
+connectBtn.addEventListener('click', () => {
+  wantConnected = !wantConnected;
+  connectBtn.textContent = wantConnected ? 'Disconnect' : 'Connect';
+  if (wantConnected) {
+    backoff = BACKOFF_MIN_MS;
+    attempt = 0;
+    openSocket();
+  } else {
+    clearTimeout(retryTimer);
+    clearTimeout(connectTimer);
+    if (ws) ws.close(); else setLink('', 'disconnected');
+  }
+});
+
+// Space toggles Live/frozen (unless typing in a field).
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(document.activeElement.tagName)) return;
+  e.preventDefault();
+  liveEl.checked = !liveEl.checked;
+});
+
+function setHint(text, kind) { liveHintEl.textContent = text; liveHintEl.className = 'stat ' + kind; }
+
+function recordSend(vals, now) {
+  lastSent = vals;
+  lastSentT = now;
+  sendTimes.push(now);
+  sentLog.unshift(vals.join(','));
+  sentLog.length = Math.min(sentLog.length, 5);
+  vals.forEach((v, i) => { sentGrid[i].textContent = v; });
+  sentLogEl.innerHTML = sentLog.map((m) => `<li>${m}</li>`).join('');
+}
+
+// One tick per SEND_INTERVAL_MS: reads the newest smoothed values (older
+// frames are simply never sent) and sends at most one message.
+setInterval(() => {
+  const now = performance.now();
+  while (sendTimes.length && now - sendTimes[0] > 1000) sendTimes.shift();
+  sendHzEl.textContent = sendTimes.length;
+  sentAgeEl.textContent = lastSent ? `${((now - lastSentT) / 1000).toFixed(1)} s ago` : '–';
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) { setHint('not connected', 'idle'); return; }
+
+  let vals;
+  if (!liveEl.checked) {
+    // Frozen: hold the last pose, resending it so the watchdog keeps holding.
+    setHint(lastSent ? 'FROZEN - holding last pose' : 'FROZEN - nothing sent yet', 'frozen');
+    if (!lastSent || now - lastSentT < KEEPALIVE_MS) return;
+    vals = lastSent;
+  } else {
+    if (!latestCurls || now - latestCurlsT > FRESH_MS) {
+      // Tracking lost: send nothing. The ESP32 opens the hand after 2 s.
+      setHint('no hand - not sending', 'idle');
+      return;
+    }
+    setHint('LIVE - sending smoothed curls', '');
+    vals = latestCurls.map((v) => Math.round(clamp(v, 0, 1) * 100));
+    const unchanged = lastSent && vals.every((v, i) => v === lastSent[i]);
+    if (unchanged && now - lastSentT < KEEPALIVE_MS) return;
+  }
+  // Previous message still going out: drop this one rather than queue it.
+  if (ws.bufferedAmount > 0) { droppedEl.textContent = ++dropped; return; }
+  ws.send(vals.join(','));
+  recordSend(vals, now);
+}, SEND_INTERVAL_MS);
+
+// Dev handle for poking at the math from the console. simulateHand([0..1 x5])
+// feeds the link as if tracking produced those smoothed curls (no camera needed).
+window.harness = { fingerAngles, normalize, get cal() { return cal; }, get smoothed() { return smoothed; },
+                   simulateHand: setLatestCurls };
 
 (async () => {
   if (!window.isSecureContext) {
