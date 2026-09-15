@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<!--
+  Hand tracking dev harness - MediaPipe HandLandmarker in the browser.
+  Computes a 0.0 (extended) .. 1.0 (curled) value per finger from 3D joint
+  angles, with per-finger calibration and EMA smoothing. Not connected to
+  the ESP32 yet.
+
+  Run (from the RoboticHand folder, so the local model file is found):
+      python3 -m http.server 8765
+  then open  http://localhost:8765/tracking/hand_tracking.html
+  (localhost counts as a secure origin, so the camera is allowed.)
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hand Tracking Harness</title>
+<style>
+  :root { --bg: #0f1115; --panel: #181b21; --line: #2a2f38; --text: #e8eaed;
+          --muted: #8b93a1; --accent: #4c8dff; --raw: #8b93a1; --good: #3ecf8e; --bad: #ff5c5c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+         font: 13px/1.4 -apple-system, system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; margin-bottom: 12px; }
+  h1 { font-size: 17px; margin: 0; }
+  .stat { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .stat b { color: var(--text); }
+  #status.err { color: var(--bad); font-weight: 600; }
+  main { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(360px, 1fr); gap: 16px; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  canvas { width: 100%; height: auto; display: block; border-radius: 6px; background: #000; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 10px; }
+  select, button { background: #232730; color: var(--text); border: 1px solid var(--line);
+                   border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  input[type=range] { accent-color: var(--accent); }
+  .finger { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .finger:last-of-type { border-bottom: 0; }
+  .fhead { display: flex; justify-content: space-between; align-items: baseline; }
+  .fhead b { font-size: 14px; }
+  .joints { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .nums { display: flex; gap: 14px; margin: 4px 0 6px; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .nums b { color: var(--text); display: inline-block; min-width: 3.2em; }
+  .nums .smv { color: var(--accent); }
+  .bar { position: relative; height: 16px; background: #0b0d11; border-radius: 4px; overflow: hidden; }
+  .bar .sm { position: absolute; inset: 0 auto 0 0; background: var(--accent); width: 0; }
+  .bar .raw { position: absolute; left: 0; top: 11px; height: 5px; background: var(--raw); width: 0; opacity: .9; }
+  .cal { display: grid; grid-template-columns: auto 1fr 3.2em auto; gap: 2px 8px; align-items: center;
+         margin-top: 6px; color: var(--muted); }
+  .cal output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  .cal input { width: 100%; }
+  .legend { color: var(--muted); font-size: 11px; margin-top: 8px; }
+  .legend i { display: inline-block; width: 18px; height: 8px; border-radius: 2px; vertical-align: middle; }
+  textarea { width: 100%; height: 80px; margin-top: 8px; background: #0b0d11; color: var(--text);
+             border: 1px solid var(--line); border-radius: 6px; font: 11px ui-monospace, monospace; }
+  .help { color: var(--muted); font-size: 11px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hand Tracking Harness</h1>
+  <span id="status" class="stat">loading…</span>
+  <span class="stat">FPS <b id="fps">–</b></span>
+  <span class="stat">inference <b id="infer">–</b> ms</span>
+  <span class="stat">hand <b id="hand">–</b></span>
+</header>
+
+<main>
+  <section class="panel">
+    <canvas id="view" width="1280" height="720"></canvas>
+    <div class="controls">
+      <label>Camera <select id="camera"></select></label>
+      <label>Smoothing α <input id="alpha" type="range" min="0.05" max="1" step="0.01">
+        <output id="alphaOut"></output></label>
+      <span class="stat">1.00 = no smoothing, lower = smoother but laggier</span>
+    </div>
+    <p class="help">
+      Curl = sum of joint bend angles from MediaPipe's 3D world landmarks (metres, centred on
+      the hand), so it doesn't change with distance from the camera or where the hand is in
+      frame. Fingers: MCP (flexion only; sideways spread removed) + PIP + DIP. Thumb: MCP + IP
+      bend + how far its metacarpal swings across the palm (angle to the pinky→index knuckle line).
+      Calibrate: hold the finger straight → "open = now", curl it fully → "curled = now".
+    </p>
+  </section>
+
+  <section class="panel">
+    <div id="fingers"></div>
+    <div class="legend"><i style="background:var(--accent)"></i> smoothed &nbsp;
+      <i style="background:var(--raw)"></i> raw (unsmoothed)</div>
+    <div class="controls">
+      <button id="copyCal">Copy calibration JSON</button>
+      <button id="resetCal">Reset calibration</button>
+    </div>
+    <textarea id="calOut" readonly></textarea>
+  </section>
+</main>
+
+<script type="module">
+import { FilesetResolver, HandLandmarker } from
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs';
+
+const WASM_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
+// Local copy first (same file as Google's float16/1 model), hosted copy as fallback.
+const MODEL_URLS = [
+  '../hand_landmarker.task',
+  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+];
+const STORE_KEY = 'handTrackingHarness.v1';
+
+const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+// Default raw-angle ranges (degrees) for open -> curled. Tune in the UI.
+const DEFAULT_CAL = [
+  { min: 50, max: 190 },   // thumb: MCP + IP + across-palm
+  { min: 25, max: 200 },   // index: MCP + PIP + DIP
+  { min: 25, max: 200 },
+  { min: 25, max: 200 },
+  { min: 25, max: 200 },
+];
+const DEFAULT_ALPHA = 0.35;
+
+// Landmark indices: wrist 0; thumb 1-4 (CMC, MCP, IP, tip);
+// index 5-8, middle 9-12, ring 13-16, pinky 17-20 (MCP, PIP, DIP, tip).
+const FINGER_JOINTS = [null, [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]];
+const BONES = [
+  [0, 1, 0], [1, 2, 0], [2, 3, 0], [3, 4, 0],
+  [0, 5, -1], [5, 6, 1], [6, 7, 1], [7, 8, 1],
+  [5, 9, -1], [9, 10, 2], [10, 11, 2], [11, 12, 2],
+  [9, 13, -1], [13, 14, 3], [14, 15, 3], [15, 16, 3],
+  [13, 17, -1], [0, 17, -1], [17, 18, 4], [18, 19, 4], [19, 20, 4],
+];  // [from, to, finger index or -1 for palm]
+
+// ---------- vector math ----------
+const sub = (a, b) => [a.x - b.x, a.y - b.y, a.z - b.z];
+const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+const len = (u) => Math.hypot(u[0], u[1], u[2]);
+const unit = (u) => { const n = len(u) || 1; return [u[0] / n, u[1] / n, u[2] / n]; };
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+// Component of u perpendicular to the unit vector `axis`.
+const removeAxis = (u, axis) => { const d = dot(u, axis); return [u[0] - axis[0] * d, u[1] - axis[1] * d, u[2] - axis[2] * d]; };
+function angleDeg(u, v) {
+  const n = len(u) * len(v);
+  return n < 1e-12 ? 0 : Math.acos(clamp(dot(u, v) / n, -1, 1)) * 180 / Math.PI;
+}
+// Bend at joint b of the chain a-b-c: 0 when a, b, c are in a straight line.
+const bend = (a, b, c) => angleDeg(sub(b, a), sub(c, b));
+
+// World landmarks -> per-finger raw curl angle (degrees) plus joint breakdown.
+function fingerAngles(w) {
+  // Knuckle line, pinky MCP -> index MCP. Used to strip sideways spread out of
+  // MCP flexion, and as the reference the thumb swings across. Its direction
+  // flips between left and right hands, but only unsigned angles are used.
+  const knuckles = unit(sub(w[5], w[17]));
+  const out = [];
+
+  // Thumb: its CMC moves in a different plane (opposition), so it isn't
+  // measured against the palm like the fingers. Two hinge bends plus the
+  // metacarpal's angle to the knuckle line (small when the thumb sticks
+  // out to the side, large when it folds across the palm).
+  const tMcp = bend(w[1], w[2], w[3]);
+  const tIp = bend(w[2], w[3], w[4]);
+  const tAcross = angleDeg(sub(w[2], w[1]), knuckles);
+  out.push({ raw: tMcp + tIp + tAcross, parts: `MCP ${tMcp.toFixed(0)}° · IP ${tIp.toFixed(0)}° · across ${tAcross.toFixed(0)}°` });
+
+  for (let f = 1; f < 5; f++) {
+    const [mcp, pip, dip, tip] = FINGER_JOINTS[f];
+    // MCP flexion: metacarpal (wrist->MCP) vs proximal phalanx, with the
+    // sideways (knuckle-line) component removed so spreading fingers
+    // doesn't read as curl.
+    const mcpFlex = angleDeg(removeAxis(sub(w[mcp], w[0]), knuckles),
+                             removeAxis(sub(w[pip], w[mcp]), knuckles));
+    const pipBend = bend(w[mcp], w[pip], w[dip]);  // hinge joints: plain angle
+    const dipBend = bend(w[pip], w[dip], w[tip]);
+    out.push({ raw: mcpFlex + pipBend + dipBend,
+               parts: `MCP ${mcpFlex.toFixed(0)}° · PIP ${pipBend.toFixed(0)}° · DIP ${dipBend.toFixed(0)}°` });
+  }
+  return out;
+}
+
+const normalize = (angle, c) => (c.max === c.min ? 0 : clamp((angle - c.min) / (c.max - c.min), 0, 1));
+
+// ---------- settings (persisted per browser) ----------
+let cal = DEFAULT_CAL.map((c) => ({ ...c }));
+let alpha = DEFAULT_ALPHA;
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+  if (saved && Array.isArray(saved.cal) && saved.cal.length === 5) cal = saved.cal.map((c) => ({ min: +c.min, max: +c.max }));
+  if (saved && saved.alpha > 0 && saved.alpha <= 1) alpha = +saved.alpha;
+} catch (e) { /* storage unavailable: use defaults */ }
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ cal, alpha })); } catch (e) { /* ignore */ }
+  calOut.value = JSON.stringify({ alpha, fingers: FINGERS.map((n, i) => ({ finger: n, openDeg: cal[i].min, curledDeg: cal[i].max })) }, null, 1);
+}
+
+// ---------- UI ----------
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status'), fpsEl = $('fps'), inferEl = $('infer'), handEl = $('hand');
+const calOut = $('calOut');
+const rows = FINGERS.map((name, i) => {
+  const d = document.createElement('div');
+  d.className = 'finger';
+  d.innerHTML = `
+    <div class="fhead"><b>${name}</b><span class="joints">–</span></div>
+    <div class="nums"><span>raw <b class="rawDeg">–</b></span><span>raw <b class="rawN">–</b></span>
+      <span>smoothed <b class="smv">–</b></span></div>
+    <div class="bar"><div class="sm"></div><div class="raw"></div></div>
+    <div class="cal">
+      <span>open</span><input type="range" min="0" max="360" step="1" class="min"><output class="minOut"></output><button class="setMin">= now</button>
+      <span>curled</span><input type="range" min="0" max="360" step="1" class="max"><output class="maxOut"></output><button class="setMax">= now</button>
+    </div>`;
+  $('fingers').appendChild(d);
+  const q = (s) => d.querySelector(s);
+  const r = { joints: q('.joints'), rawDeg: q('.rawDeg'), rawN: q('.rawN'), smv: q('.smv'),
+              barSm: q('.bar .sm'), barRaw: q('.bar .raw'), min: q('.min'), max: q('.max'),
+              minOut: q('.minOut'), maxOut: q('.maxOut') };
+  const sync = () => { r.min.value = cal[i].min; r.max.value = cal[i].max;
+                       r.minOut.textContent = cal[i].min + '°'; r.maxOut.textContent = cal[i].max + '°'; };
+  r.sync = sync;
+  r.min.addEventListener('input', () => { cal[i].min = +r.min.value; sync(); save(); });
+  r.max.addEventListener('input', () => { cal[i].max = +r.max.value; sync(); save(); });
+  q('.setMin').addEventListener('click', () => { if (smoothed[i] != null) { cal[i].min = Math.round(smoothed[i]); sync(); save(); } });
+  q('.setMax').addEventListener('click', () => { if (smoothed[i] != null) { cal[i].max = Math.round(smoothed[i]); sync(); save(); } });
+  sync();
+  return r;
+});
+
+const alphaEl = $('alpha'), alphaOut = $('alphaOut');
+alphaEl.value = alpha;
+alphaOut.textContent = alpha.toFixed(2);
+alphaEl.addEventListener('input', () => { alpha = +alphaEl.value; alphaOut.textContent = alpha.toFixed(2); save(); });
+$('resetCal').addEventListener('click', () => { cal = DEFAULT_CAL.map((c) => ({ ...c })); rows.forEach((r) => r.sync()); save(); });
+$('copyCal').addEventListener('click', async () => {
+  calOut.select();
+  try { await navigator.clipboard.writeText(calOut.value); statusEl.textContent = 'calibration copied'; } catch (e) { /* textarea is selected */ }
+});
+save();
+
+function setStatus(msg, isErr = false) { statusEl.textContent = msg; statusEl.className = isErr ? 'stat err' : 'stat'; }
+
+// ---------- camera ----------
+const video = document.createElement('video');
+video.playsInline = true;
+video.muted = true;
+const camSel = $('camera');
+let stream = null;
+
+async function startCamera(deviceId) {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false,
+  });
+  video.srcObject = stream;
+  await video.play();
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+  const current = stream.getVideoTracks()[0].getSettings().deviceId;
+  camSel.innerHTML = cams.map((c, i) => `<option value="${c.deviceId}" ${c.deviceId === current ? 'selected' : ''}>${c.label || 'Camera ' + (i + 1)}</option>`).join('');
+}
+camSel.addEventListener('change', () => startCamera(camSel.value).catch((e) => setStatus('camera: ' + e.message, true)));
+
+// ---------- model ----------
+async function createLandmarker() {
+  const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+  let lastErr;
+  for (const modelAssetPath of MODEL_URLS) {
+    for (const delegate of ['GPU', 'CPU']) {
+      try {
+        const lm = await HandLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath, delegate },
+          runningMode: 'VIDEO',
+          numHands: 1,
+          minHandDetectionConfidence: 0.5,
+          minHandPresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        return { lm, info: `${delegate}, ${modelAssetPath.startsWith('http') ? 'hosted' : 'local'} model` };
+      } catch (e) { lastErr = e; }
+    }
+  }
+  throw lastErr;
+}
+
+// ---------- main loop ----------
+const canvas = $('view'), ctx = canvas.getContext('2d');
+const smoothed = [null, null, null, null, null];  // EMA of raw angle, degrees
+let landmarker = null, lastVideoTime = -1, handPresent = false;
+let fps = 0, lastFrameT = 0, inferMs = 0;
+
+function curlColor(t) { return `hsl(${Math.round(140 - 140 * t)} 85% 55%)`; }  // green -> red
+
+function draw(image, curls) {
+  const w = canvas.width, h = canvas.height;
+  ctx.save();
+  ctx.translate(w, 0);
+  ctx.scale(-1, 1);  // mirror, so it moves like a mirror image
+  ctx.drawImage(video, 0, 0, w, h);
+  if (image) {
+    ctx.lineWidth = 4;
+    for (const [a, b, f] of BONES) {
+      ctx.strokeStyle = f < 0 ? 'rgba(255,255,255,.75)' : curlColor(curls[f]);
+      ctx.beginPath();
+      ctx.moveTo(image[a].x * w, image[a].y * h);
+      ctx.lineTo(image[b].x * w, image[b].y * h);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#fff';
+    for (const p of image) { ctx.beginPath(); ctx.arc(p.x * w, p.y * h, 4, 0, 2 * Math.PI); ctx.fill(); }
+  }
+  ctx.restore();
+  if (!image) {
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(0, 0, 150, 34);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px system-ui';
+    ctx.fillText('no hand', 12, 23);
+  }
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!landmarker || video.readyState < 2 || video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+  if (canvas.width !== video.videoWidth && video.videoWidth) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
+
+  const t0 = performance.now();
+  const res = landmarker.detectForVideo(video, t0);
+  inferMs = inferMs ? inferMs * 0.9 + (performance.now() - t0) * 0.1 : performance.now() - t0;
+  if (lastFrameT) fps = fps ? fps * 0.9 + (1000 / (now - lastFrameT)) * 0.1 : 1000 / (now - lastFrameT);
+  lastFrameT = now;
+
+  const world = res.worldLandmarks && res.worldLandmarks[0];
+  const image = res.landmarks && res.landmarks[0];
+  const curls = [0, 0, 0, 0, 0];
+  if (world && image) {
+    const angles = fingerAngles(world);
+    angles.forEach((a, i) => {
+      // EMA on the raw angle; restart from the raw value when the hand reappears.
+      smoothed[i] = (!handPresent || smoothed[i] == null) ? a.raw : alpha * a.raw + (1 - alpha) * smoothed[i];
+      const rawN = normalize(a.raw, cal[i]);
+      const smN = normalize(smoothed[i], cal[i]);
+      curls[i] = smN;
+      const r = rows[i];
+      r.joints.textContent = a.parts;
+      r.rawDeg.textContent = a.raw.toFixed(0) + '°';
+      r.rawN.textContent = rawN.toFixed(2);
+      r.smv.textContent = smN.toFixed(2);
+      r.barRaw.style.width = (rawN * 100).toFixed(1) + '%';
+      r.barSm.style.width = (smN * 100).toFixed(1) + '%';
+    });
+    handPresent = true;
+    const hd = res.handedness && res.handedness[0] && res.handedness[0][0];
+    handEl.textContent = hd ? `${hd.categoryName} ${(hd.score * 100).toFixed(0)}%` : 'yes';
+  } else {
+    handPresent = false;  // readouts hold their last values
+    handEl.textContent = 'none';
+  }
+  draw(image, curls);
+  fpsEl.textContent = fps.toFixed(0);
+  inferEl.textContent = inferMs.toFixed(1);
+}
+
+// Dev handle for poking at the math from the console.
+window.harness = { fingerAngles, normalize, get cal() { return cal; }, get smoothed() { return smoothed; } };
+
+(async () => {
+  if (!window.isSecureContext) {
+    setStatus('Not a secure origin — serve with "python3 -m http.server 8765" and open http://localhost:8765/tracking/hand_tracking.html', true);
+    return;
+  }
+  try {
+    setStatus('loading model…');
+    const { lm, info } = await createLandmarker();
+    landmarker = lm;
+    setStatus(`model ready (${info}) — starting camera…`);
+    await startCamera();
+    setStatus(`running (${info})`);
+  } catch (e) {
+    const msg = e && e.name === 'NotAllowedError' ? 'camera permission denied — allow it in the browser and reload'
+      : e && e.name === 'NotFoundError' ? 'no camera found'
+      : (e && e.message) || String(e);
+    setStatus(msg, true);
+    console.error(e);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
