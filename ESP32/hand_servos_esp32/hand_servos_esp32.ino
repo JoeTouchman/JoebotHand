@@ -37,15 +37,21 @@
 //
 // Retune the sounds here: {frequency in Hz, milliseconds}, hz 0 = silence.
 struct Note { uint16_t hz; uint16_t ms; };
-const Note BOOT_CHIRP[]  = {{1175, 60}, {1568, 90}};             // rising two-note
-const Note DONE_BEEP[]   = {{1976, 60}, {0, 60}, {1976, 60}};    // quick double-beep
-const Note CLIENT_BLIP[] = {{1568, 50}, {1047, 70}};             // falling: a phone connected
+// A passive piezo is loudest at its resonance, usually near 4 kHz, and falls
+// off steeply below it - so these sit high on purpose. Play B3 (sweep) and
+// pick whichever step is loudest on your piezo, then tune these to match.
+const Note BOOT_CHIRP[]  = {{3136, 70}, {4186, 110}};            // rising two-note
+const Note DONE_BEEP[]   = {{4186, 70}, {0, 55}, {4186, 70}};    // quick double-beep
+const Note CLIENT_BLIP[] = {{4186, 50}, {3136, 80}};             // falling: a phone connected
+const Note SWEEP[]       = {{1000, 150}, {1500, 150}, {2000, 150}, {2500, 150}, {3000, 150},
+                            {3500, 150}, {4000, 150}, {4500, 150}, {5000, 150}};
 
 struct Sound { const char *name; const Note *notes; uint8_t count; };
 const Sound SOUNDS[] = {
   {"boot", BOOT_CHIRP, sizeof(BOOT_CHIRP) / sizeof(Note)},
   {"done", DONE_BEEP, sizeof(DONE_BEEP) / sizeof(Note)},
   {"client", CLIENT_BLIP, sizeof(CLIENT_BLIP) / sizeof(Note)},
+  {"sweep 1-5 kHz", SWEEP, sizeof(SWEEP) / sizeof(Note)},
 };
 const int NUM_SOUNDS = sizeof(SOUNDS) / sizeof(Sound);
 const int SOUND_BOOT = 0, SOUND_DONE = 1, SOUND_CLIENT = 2;
@@ -54,7 +60,7 @@ const int BUZZER_PIN = 17;
 const uint8_t BUZZER_CHANNEL = 5;     // asked for explicitly; servos take 0-4
 const uint8_t BUZZER_RES = 10;
 const uint32_t BUZZER_IDLE_HZ = 2000;
-const int BUZZER_VOLUME = 25;         // % duty cycle; 50 is loudest, lower is quieter
+const int BUZZER_VOLUME = 50;         // % duty cycle; 50 drives a square wave as hard as it goes
 const uint32_t BUZZER_DUTY = (1UL << BUZZER_RES) * BUZZER_VOLUME / 100;
 
 bool buzzerOk = false;
@@ -79,6 +85,18 @@ void playSound(int index) {
   seqCount = SOUNDS[index].count;
   seqIndex = 0;
   startNote(seqNotes[0].hz, seqNotes[0].ms);
+}
+
+// A single tone held briefly, for finding the piezo's loudest frequency.
+Note adhocNote[1];
+void playTone(int hz, int ms) {
+  if (!buzzerOk || hz < 100 || hz > 20000) return;
+  adhocNote[0].hz = (uint16_t)hz;
+  adhocNote[0].ms = (uint16_t)ms;
+  seqNotes = adhocNote;
+  seqCount = 1;
+  seqIndex = 0;
+  startNote(adhocNote[0].hz, adhocNote[0].ms);
 }
 
 bool buzzerBusy() { return seqNotes != NULL; }
@@ -791,7 +809,9 @@ void setup() {
 //   "A\n"      -> replay the startup animation
 //   "R\n"      -> relax: stop pulses on all servos (limp)
 //   "?\n"      -> print calibration, LEDC channels, routing and network status
-//   "B0\n"     -> play a sound: B0 boot chirp, B1 done beep, B2 client blip
+//   "B0\n"     -> play a sound: B0 boot chirp, B1 done beep, B2 client blip,
+//                 B3 sweep 1-5 kHz. "B3000" holds 3000 Hz for 400 ms, to
+//                 find which frequency is loudest on this piezo.
 void handleSerial() {
   String line = Serial.readStringUntil('\n');
   line.trim();
@@ -812,10 +832,13 @@ void handleSerial() {
     return;
   }
   if (line.startsWith("B")) {
-    int idx = line.substring(1).toInt();
-    if (idx >= 0 && idx < NUM_SOUNDS) {
-      playSound(idx);
-      Serial.printf("buzzer: %s\n", SOUNDS[idx].name);
+    int n = line.substring(1).toInt();
+    if (n >= 100) {  // a frequency, not a sound index
+      playTone(n, 400);
+      Serial.printf("buzzer: %d Hz\n", n);
+    } else if (n >= 0 && n < NUM_SOUNDS) {
+      playSound(n);
+      Serial.printf("buzzer: %s\n", SOUNDS[n].name);
     }
     return;
   }
