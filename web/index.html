@@ -200,19 +200,6 @@
 <div class="wrap">
   <header>
     <div class="brand">
-      <svg viewBox="0 0 40 40" aria-hidden="true">
-        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff7a1a"/></linearGradient></defs>
-        <rect x="1" y="1" width="38" height="38" rx="10" fill="#12161d" stroke="#232a36"/>
-        <g fill="url(#lg)">
-          <rect x="8" y="10" width="5" height="15" rx="2.5"/>
-          <rect x="14.5" y="6" width="5" height="19" rx="2.5"/>
-          <rect x="21" y="7.5" width="5" height="17.5" rx="2.5"/>
-          <rect x="27.5" y="11.5" width="5" height="13.5" rx="2.5"/>
-          <rect x="8" y="21" width="24.5" height="12" rx="5"/>
-        </g>
-        <circle cx="20" cy="27" r="2.2" fill="#12161d"/>
-      </svg>
       <div><div class="wordmark">JOEBOTICS</div><div class="product">Joebot Hand</div></div>
     </div>
     <span id="linkPill" class="pill">offline</span>
@@ -329,6 +316,26 @@ const sliders = FINGERS.map((name, i) => {
   });
   return { input, out };
 });
+
+// Move every finger at once (sliders mode only).
+const presetRow = document.createElement('div');
+presetRow.className = 'row';
+presetRow.style.marginTop = '12px';
+const presetBtns = [['All open', 0], ['Half', 50], ['All closed', 100]].map(([label, value]) => {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.style.flex = '1';
+  b.addEventListener('click', () => {
+    if (mode !== 'sliders') return;
+    sliderVals.fill(value);
+    showSliders(sliderVals);
+    dirty = true;
+  });
+  presetRow.appendChild(b);
+  return b;
+});
+$('fingersCard').appendChild(presetRow);
+
 function paintSlider(i, v) {
   sliders[i].input.value = v;
   sliders[i].input.style.setProperty('--p', v + '%');
@@ -345,6 +352,7 @@ function setMode(m) {
   $('modeCamera').setAttribute('aria-pressed', m === 'camera');
   $('cameraCard').hidden = m !== 'camera';
   sliders.forEach((s) => { s.input.disabled = m === 'camera'; });
+  presetBtns.forEach((b) => { b.disabled = m === 'camera'; });
   if (m === 'camera') {
     startTracking();
   } else {
