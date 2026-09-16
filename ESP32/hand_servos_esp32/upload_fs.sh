@@ -67,6 +67,18 @@ printf "  %-36s %10d -> %9d bytes = %.2f MB of the %.2f MB partition (%d%%)\n" "
   "$(echo "$gz / 1048576" | bc -l)" "$(echo "$((SIZE)) / 1048576" | bc -l)" $((gz * 100 / SIZE))
 echo "  build $VERSION"
 
+# A real certificate, if you have issued one with acme.sh/Let's Encrypt.
+# These go to /private/ on the hand, which the web server refuses to serve, so
+# renewing is just re-running this script - no firmware rebuild.
+if [ -f certs/live/cert.pem ] && [ -f certs/live/key.pem ]; then
+  mkdir -p data/private
+  cp certs/live/cert.pem data/private/cert.pem
+  cp certs/live/key.pem data/private/key.pem
+  echo "  certificate: $(openssl x509 -in certs/live/cert.pem -noout -subject -enddate | tr '\n' ' ')"
+else
+  echo "  certificate: none in certs/live - the hand keeps its built-in self-signed one"
+fi
+
 [ "${BUILD_ONLY:-0}" = 1 ] && exit 0
 
 IMG="${TMPDIR:-/tmp}/hand_littlefs.bin"

@@ -237,11 +237,16 @@ const char *const CONNECTIVITY_HOSTS[] = {
   "www.msftconnecttest.com",                                                                // Windows
 };
 
+// Names that point at the hand itself. The same A record exists in public DNS,
+// so a phone gets 192.168.4.1 whether or not it asks this server.
+const char *const LOCAL_NAMES[] = {"hand.joeprojects.com"};
+
 httpd_handle_t httpsServer = NULL;   // :443 app + websocket
 httpd_handle_t httpServer = NULL;    // :80 connectivity checks + redirect
 AsyncUDP dnsUdp;
 bool dnsOk = false;
 bool fsOk = false;
+const char *certSource = "built-in self-signed (192.168.4.1 only)";
 size_t pageBytes = 0;                // index.html.gz
 int wsClients = 0;
 
@@ -359,7 +364,8 @@ esp_err_t fileHandler(httpd_req_t *req) {
   if (path.endsWith("/")) path += "index.html";
   File f;
   bool gz = false;
-  if (fsOk && path.indexOf("..") < 0) {
+  // /private/ holds the TLS key and certificate: never served.
+  if (fsOk && path.indexOf("..") < 0 && !path.startsWith("/private/")) {
     gz = LittleFS.exists(path + ".gz");
     f = LittleFS.open(gz ? path + ".gz" : path, "r");
   }
@@ -417,14 +423,25 @@ esp_err_t probeMicrosoft(httpd_req_t *req) {  // Windows: /connecttest.txt
 }
 
 esp_err_t redirectToHttps(httpd_req_t *req) {
+  // Redirect to the host the phone asked for (hand.joeprojects.com, say), not
+  // to the IP - otherwise the certificate wouldn't match the address.
+  char host[64] = "192.168.4.1";
+  size_t len = httpd_req_get_hdr_value_len(req, "Host");
+  if (len > 0 && len < sizeof host) httpd_req_get_hdr_value_str(req, "Host", host, sizeof host);
+  char *port = strchr(host, ':');
+  if (port) *port = '\0';
+  char location[96];
+  snprintf(location, sizeof location, "https://%s/", host);
   httpd_resp_set_status(req, "302 Found");
-  httpd_resp_set_hdr(req, "Location", "https://192.168.4.1/");
+  httpd_resp_set_hdr(req, "Location", location);  // sent before this returns
   return httpd_resp_send(req, NULL, 0);
 }
 
 // --- DNS (port 53) ---
-bool isConnectivityHost(const char *name) {
+bool resolvesHere(const char *name) {
   for (const char *h : CONNECTIVITY_HOSTS)
+    if (strcasecmp(name, h) == 0) return true;
+  for (const char *h : LOCAL_NAMES)
     if (strcasecmp(name, h) == 0) return true;
   return false;
 }
@@ -451,7 +468,7 @@ void onDnsPacket(AsyncUDPPacket &p) {
   if (pos + 5 > n) return;
   uint16_t qtype = (q[pos + 1] << 8) | q[pos + 2];
   size_t qend = pos + 5;  // end label + type + class
-  bool known = isConnectivityHost(name);
+  bool known = resolvesHere(name);
 
   uint8_t r[512 + 16];
   memcpy(r, q, qend);                // header + question
@@ -469,6 +486,22 @@ void onDnsPacket(AsyncUDPPacket &p) {
     Serial.printf("dns: %s -> 192.168.4.1\n", name);
   }
   dnsUdp.writeTo(r, len, p.remoteIP(), p.remotePort());
+}
+
+// Reads a PEM file into a heap buffer. mbedTLS wants the length to include
+// the terminating NUL.
+char *readPemFile(const char *path, size_t *outLen) {
+  File f = LittleFS.open(path, "r");
+  if (!f || f.isDirectory()) return NULL;
+  size_t n = f.size();
+  if (n == 0 || n > 16384) { f.close(); return NULL; }
+  char *buf = (char *)malloc(n + 1);
+  if (!buf) { f.close(); return NULL; }
+  size_t got = f.read((uint8_t *)buf, n);
+  f.close();
+  buf[got] = '\0';
+  *outLen = got + 1;
+  return buf;
 }
 
 void addRoute(httpd_handle_t server, const char *uri, esp_err_t (*handler)(httpd_req_t *), bool websocket) {
@@ -539,6 +572,7 @@ void printNetworkStatus() {
                 (WiFi.getMode() & WIFI_STA) ? "ON (unexpected!)" : "off");
   Serial.printf("web: https :443 %s, http :80 %s, dns :53 %s\n", httpsServer ? "up" : "FAILED",
                 httpServer ? "up" : "FAILED", dnsOk ? "up" : "FAILED");
+  Serial.printf("tls: certificate %s | local name: %s\n", certSource, LOCAL_NAMES[0]);
   if (fsOk) {
     Serial.printf("fs: LittleFS on '%s' mounted, %u of %u KB used, index.html.gz %s\n", FS_PARTITION,
                   (unsigned)(LittleFS.usedBytes() / 1024), (unsigned)(LittleFS.totalBytes() / 1024),
@@ -571,12 +605,33 @@ void startNetwork() {
     }
   }
 
-  // HTTPS on 443: the app and the websocket.
+  // HTTPS on 443: the app and the websocket. A real certificate from flash
+  // (upload_fs.sh copies certs/live/*.pem to /private/) is used when it's
+  // there, so renewing one never needs a firmware rebuild; otherwise the
+  // self-signed pair compiled in from make_certs.sh.
+  const char *certPem = SERVER_CERT_PEM;
+  const char *keyPem = SERVER_KEY_PEM;
+  size_t certLen = sizeof(SERVER_CERT_PEM), keyLen = sizeof(SERVER_KEY_PEM);
+  if (fsOk) {
+    size_t cLen = 0, kLen = 0;
+    char *cert = readPemFile("/private/cert.pem", &cLen);
+    char *key = readPemFile("/private/key.pem", &kLen);
+    if (cert && key) {
+      certPem = cert;
+      keyPem = key;
+      certLen = cLen;
+      keyLen = kLen;
+      certSource = "from flash (/private/cert.pem)";
+    } else {
+      free(cert);
+      free(key);
+    }
+  }
   httpd_ssl_config_t ssl = HTTPD_SSL_CONFIG_DEFAULT();
-  ssl.servercert = (const uint8_t *)SERVER_CERT_PEM;
-  ssl.servercert_len = sizeof(SERVER_CERT_PEM);
-  ssl.prvtkey_pem = (const uint8_t *)SERVER_KEY_PEM;
-  ssl.prvtkey_len = sizeof(SERVER_KEY_PEM);
+  ssl.servercert = (const uint8_t *)certPem;
+  ssl.servercert_len = certLen;
+  ssl.prvtkey_pem = (const uint8_t *)keyPem;
+  ssl.prvtkey_len = keyLen;
   ssl.httpd.uri_match_fn = httpd_uri_match_wildcard;
   ssl.httpd.max_uri_handlers = 4;
   if (httpd_ssl_start(&httpsServer, &ssl) == ESP_OK) {
