@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<!--
+  Joebotics - Joebot Hand web controller, served by the hand itself.
+
+  Sliders mode: drive each finger directly (no camera, nothing heavy loads).
+  Camera mode:  MediaPipe hand tracking turns your hand's pose into finger
+                curls and streams them to the hand.
+
+  The ESP32 serves this page at https://192.168.4.1 (self-signed TLS, so the
+  camera is allowed) and the websocket on the same origin, wss://192.168.4.1/ws.
+  Protocol, same as before: five integers 0-100 (thumb..pinky) and "A" to
+  play the startup animation; the hand reports its position back.
+
+  Build + flash (gzips everything into the ESP32's flash):
+      ESP32/hand_servos_esp32/upload_fs.sh
+  Local preview (from the repo root): python3 -m http.server 8765
+  then open http://localhost:8765/web/
+
+  The curl math is copied from tracking/hand_tracking.html (the tuning
+  harness) - keep the two in sync.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0c10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Joebot Hand · Joebotics</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0c10'/%3E%3Cg fill='%23ff7a1a'%3E%3Crect x='6' y='8' width='4' height='12' rx='2'/%3E%3Crect x='11' y='5' width='4' height='15' rx='2'/%3E%3Crect x='16' y='6' width='4' height='14' rx='2'/%3E%3Crect x='21' y='9' width='4' height='11' rx='2'/%3E%3Crect x='6' y='17' width='19' height='10' rx='4'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+  :root { --bg: #0a0c10; --panel: #12161d; --panel2: #171c25; --line: #232a36; --text: #eef1f5;
+          --muted: #8a93a3; --accent: #ff7a1a; --accent2: #ffb347; --ok: #36d399; --warn: #f5b942;
+          --bad: #ff5d5d; --track: #262d39; }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body { margin: 0; min-height: 100vh; color: var(--text); background: var(--bg);
+         font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+         -webkit-tap-highlight-color: transparent;
+         background-image:
+           radial-gradient(ellipse 90% 45% at 50% -8%, rgba(255,122,26,.20), transparent 70%),
+           linear-gradient(rgba(255,255,255,.028) 1px, transparent 1px),
+           linear-gradient(90deg, rgba(255,255,255,.028) 1px, transparent 1px);
+         background-size: auto, 28px 28px, 28px 28px; background-attachment: fixed; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 14px 16px 40px;
+          padding-top: max(14px, env(safe-area-inset-top)); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand svg { width: 40px; height: 40px; flex: none; filter: drop-shadow(0 0 10px rgba(255,122,26,.35)); }
+  .wordmark { font-weight: 850; letter-spacing: .24em; font-size: 16px; line-height: 1;
+              background: linear-gradient(90deg, var(--accent), var(--accent2));
+              -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .product { font-size: 13px; color: var(--muted); letter-spacing: .04em; margin-top: 4px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px;
+          font-size: 13px; font-weight: 650; background: var(--panel2); color: var(--muted);
+          border: 1px solid var(--line); white-space: nowrap; }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .pill.ok { color: var(--ok); border-color: rgba(54,211,153,.35); }
+  .pill.warn { color: var(--warn); border-color: rgba(245,185,66,.35); }
+  .pill.bad { color: var(--bad); border-color: rgba(255,93,93,.35); }
+  .card { background: linear-gradient(180deg, var(--panel2), var(--panel)); border: 1px solid var(--line);
+          border-radius: 16px; padding: 14px 16px; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .spread { justify-content: space-between; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12.5px; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  button { font: inherit; cursor: pointer; border-radius: 12px; border: 1px solid var(--line);
+           background: var(--panel2); color: var(--text); padding: 9px 14px; font-weight: 600; }
+  button:active { transform: scale(.98); }
+  button:disabled { opacity: .4; cursor: default; transform: none; }
+  button.primary { background: linear-gradient(180deg, #ff8a33, var(--accent)); border-color: transparent; color: #1a0d00; }
+  button.ghost { background: transparent; }
+  input[type=text] { font: 14px ui-monospace, Menlo, monospace; width: 100%; padding: 9px 11px; border-radius: 10px;
+                     background: #0c0f14; color: var(--text); border: 1px solid var(--line); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .notice { margin-top: 10px; padding: 10px 12px; border-radius: 10px; font-size: 13px;
+            background: rgba(245,185,66,.08); border: 1px solid rgba(245,185,66,.3); color: #f3dfb0; }
+  .notice a { color: var(--accent2); }
+  .notice details summary { color: #f3dfb0; }
+  .stats { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+  .stats b { color: var(--text); font-weight: 600; }
+  /* mode switch */
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px;
+           background: var(--panel); border: 1px solid var(--line); margin-bottom: 14px; }
+  .modes button { border: 0; background: transparent; color: var(--muted); border-radius: 10px; padding: 10px; }
+  .modes button[aria-pressed=true] { background: var(--panel2); color: var(--text);
+                                     box-shadow: inset 0 0 0 1px var(--line), 0 0 0 1px rgba(255,122,26,.25); }
+  /* fingers */
+  .finger { padding: 6px 0 2px; }
+  .finger + .finger { border-top: 1px solid rgba(255,255,255,.04); }
+  .flabel { display: flex; justify-content: space-between; font-weight: 650; }
+  .flabel span:last-child { color: var(--accent2); font-variant-numeric: tabular-nums; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 38px;
+                      background: transparent; margin: 0; --p: 0%; }
+  input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 4px;
+    background: linear-gradient(90deg, var(--accent) var(--p), var(--track) var(--p)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; margin-top: -9px;
+    border-radius: 50%; background: #fff; border: 3px solid var(--accent); box-shadow: 0 0 0 5px rgba(255,122,26,.16); }
+  input[type=range]::-moz-range-track { height: 8px; border-radius: 4px; background: var(--track); }
+  input[type=range]::-moz-range-progress { height: 8px; border-radius: 4px; background: var(--accent); }
+  input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 3px solid var(--accent); }
+  input[type=range]:disabled::-webkit-slider-thumb { background: var(--accent); box-shadow: none; }
+  input[type=range].mini { height: 26px; }
+  input[type=range].mini::-webkit-slider-thumb { width: 18px; height: 18px; margin-top: -5px; }
+  #animBtn { width: 100%; padding: 14px; font-size: 16px; }
+  /* camera */
+  .viewport { position: relative; border-radius: 12px; overflow: hidden; background: #000; aspect-ratio: 4 / 3; }
+  .viewport canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .viewport .overlay { position: absolute; left: 10px; top: 10px; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; cursor: pointer; user-select: none; }
+  .switch input { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px;
+                  background: var(--track); position: relative; transition: background .15s; margin: 0; }
+  .switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+                         border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked { background: var(--accent); }
+  .switch input:checked::after { transform: translateX(18px); }
+  #camStatus.err { color: var(--bad); }
+  .tune { margin-top: 12px; }
+  .tune .grid { display: grid; grid-template-columns: 58px 1fr 1fr; gap: 2px 10px; align-items: center; margin-top: 8px; }
+  .tune .grid .h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .tune output { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 22px; letter-spacing: .08em; }
+  footer b { color: var(--accent); letter-spacing: .22em; }
+  /* splash + loader: a robot hand curling its fingers inside a scanning ring */
+  .splash, .loader { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+                     align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  .splash { background: radial-gradient(ellipse at 50% 40%, #1a1206, var(--bg) 70%); transition: opacity .5s; }
+  .splash.gone { opacity: 0; pointer-events: none; }
+  .splash .wordmark { font-size: 20px; margin-top: 6px; }
+  .loader { background: rgba(6,8,11,.86); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .loader[hidden] { display: none; }
+  .loader-card { width: min(340px, 100%); }
+  .bot { position: relative; width: 128px; height: 128px; margin: 0 auto 20px; }
+  .bot::before { content: ""; position: absolute; inset: -12px; border-radius: 50%;
+                 background: conic-gradient(from 0deg, transparent 0 62%, var(--accent) 88%, var(--accent2) 96%, transparent 100%);
+                 -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+                 mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+                 animation: spin 1.3s linear infinite; }
+  .bot::after { content: ""; position: absolute; inset: 8px; border-radius: 50%;
+                background: radial-gradient(circle, rgba(255,122,26,.22), transparent 65%); animation: pulse 1.6s ease-in-out infinite; }
+  .bot svg { position: relative; z-index: 1; width: 100%; height: 100%; filter: drop-shadow(0 0 14px rgba(255,122,26,.5)); }
+  .bot .f { transform-box: fill-box; transform-origin: 50% 100%; animation: curl 1.6s ease-in-out infinite; }
+  .bot .f2 { animation-delay: .12s; } .bot .f3 { animation-delay: .24s; } .bot .f4 { animation-delay: .36s; }
+  .bot .f5 { animation-delay: .48s; }
+  @keyframes curl { 0%, 60%, 100% { transform: scaleY(1); } 28% { transform: scaleY(.36); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%, 100% { opacity: .5; transform: scale(.92); } 50% { opacity: 1; transform: scale(1.04); } }
+  .loader-title { font-weight: 750; font-size: 17px; margin-bottom: 12px; }
+  .progress { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+  .progress div { height: 100%; width: 0; border-radius: 4px; transition: width .25s;
+                  background: linear-gradient(90deg, var(--accent), var(--accent2));
+                  box-shadow: 0 0 12px rgba(255,122,26,.6); }
+  .progress.indeterminate div { width: 35%; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(300%); } }
+  .loader-detail { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 1.4em; }
+  .loader-note { margin-top: 14px; font-size: 12px; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { .bot .f, .bot::before, .bot::after, .progress.indeterminate div { animation: none; } }
+</style>
+</head>
+<body>
+<div id="splash" class="splash" aria-hidden="true">
+  <div class="bot"><svg viewBox="0 0 100 100">
+    <defs><linearGradient id="botg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff7a1a"/></linearGradient></defs>
+    <g fill="url(#botg)">
+      <rect class="f f1" x="25" y="27" width="10" height="33" rx="5"/>
+      <rect class="f f2" x="37" y="17" width="10" height="43" rx="5"/>
+      <rect class="f f3" x="49" y="20" width="10" height="40" rx="5"/>
+      <rect class="f f4" x="61" y="29" width="10" height="31" rx="5"/>
+      <g transform="rotate(-40 74 70)"><rect class="f f5" x="70" y="46" width="10" height="26" rx="5"/></g>
+      <rect x="23" y="54" width="50" height="30" rx="11"/>
+    </g>
+    <circle cx="48" cy="69" r="4" fill="#0a0c10"/>
+  </svg></div>
+  <div class="wordmark">JOEBOTICS</div>
+  <div class="product">Joebot Hand</div>
+</div>
+
+<div id="loader" class="loader" hidden>
+  <div class="loader-card">
+    <div class="bot"><svg viewBox="0 0 100 100">
+      <g fill="url(#botg)">
+        <rect class="f f1" x="25" y="27" width="10" height="33" rx="5"/>
+        <rect class="f f2" x="37" y="17" width="10" height="43" rx="5"/>
+        <rect class="f f3" x="49" y="20" width="10" height="40" rx="5"/>
+        <rect class="f f4" x="61" y="29" width="10" height="31" rx="5"/>
+        <g transform="rotate(-40 74 70)"><rect class="f f5" x="70" y="46" width="10" height="26" rx="5"/></g>
+        <rect x="23" y="54" width="50" height="30" rx="11"/>
+      </g>
+      <circle cx="48" cy="69" r="4" fill="#0a0c10"/>
+    </svg></div>
+    <div class="loader-title" id="loaderTitle">Waking up hand tracking</div>
+    <div class="progress" id="loaderProgress"><div id="loaderBar"></div></div>
+    <div class="loader-detail mono" id="loaderDetail">connecting…</div>
+    <div class="loader-note">First time only — it’s kept on this device after this.</div>
+  </div>
+</div>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ffb347"/><stop offset="1" stop-color="#ff7a1a"/></linearGradient></defs>
+        <rect x="1" y="1" width="38" height="38" rx="10" fill="#12161d" stroke="#232a36"/>
+        <g fill="url(#lg)">
+          <rect x="8" y="10" width="5" height="15" rx="2.5"/>
+          <rect x="14.5" y="6" width="5" height="19" rx="2.5"/>
+          <rect x="21" y="7.5" width="5" height="17.5" rx="2.5"/>
+          <rect x="27.5" y="11.5" width="5" height="13.5" rx="2.5"/>
+          <rect x="8" y="21" width="24.5" height="12" rx="5"/>
+        </g>
+        <circle cx="20" cy="27" r="2.2" fill="#12161d"/>
+      </svg>
+      <div><div class="wordmark">JOEBOTICS</div><div class="product">Joebot Hand</div></div>
+    </div>
+    <span id="linkPill" class="pill">offline</span>
+  </header>
+
+  <section class="card">
+    <div class="row spread">
+      <div>
+        <div style="font-weight:700">Hand link</div>
+        <div id="linkText" class="small muted">Not connected</div>
+      </div>
+      <button id="connectBtn" class="primary">Connect</button>
+    </div>
+    <div id="mixedNotice" class="notice" hidden>
+      This page is on <b>https://</b> but the hand address starts with <b>ws://</b> — browsers
+      block that. Use a <b>wss://</b> address (the default when the page comes from the hand).
+    </div>
+    <div id="certHint" class="notice" hidden>
+      <b>Tip:</b> install the Joebotics certificate once — no more warning, and this page and
+      hand tracking stay saved on this device. <a href="/joebotics-ca.crt">Download certificate</a>
+      <details><summary>How to install</summary>
+        <p><b>iPhone:</b> open the download → Settings → <i>Profile Downloaded</i> → Install. Then
+        Settings → General → About → Certificate Trust Settings → turn on <i>Joebotics Local CA</i>.</p>
+        <p><b>Android:</b> Settings → Security → Encryption &amp; credentials → Install a certificate →
+        CA certificate → choose <i>joebotics-ca.crt</i>.</p>
+      </details>
+    </div>
+    <div class="stats">
+      <span>sending <b id="sendHz">0</b> Hz</span>
+      <span>last sent <b id="lastSent" class="mono">–</b></span>
+      <span>hand reports <b id="espState" class="mono">–</b></span>
+    </div>
+    <details>
+      <summary>Hand address</summary>
+      <div style="margin-top:8px"><input id="wsUrl" type="text" spellcheck="false" autocapitalize="off"></div>
+      <p class="small muted">Leave as is when this page comes from the hand (join the <b>JOES-HAND</b> WiFi).</p>
+    </details>
+  </section>
+
+  <nav class="modes" aria-label="Control mode">
+    <button id="modeSliders" aria-pressed="true">Sliders</button>
+    <button id="modeCamera" aria-pressed="false">Camera</button>
+  </nav>
+
+  <section id="cameraCard" class="card" hidden>
+    <div class="viewport"><canvas id="view" width="640" height="480"></canvas>
+      <span id="handPill" class="pill overlay">starting…</span></div>
+    <div class="row spread" style="margin-top:12px">
+      <label class="switch" title="Space bar toggles"><input type="checkbox" id="live" checked> <span id="liveLabel">Live</span></label>
+      <div class="row">
+        <span class="small muted mono"><span id="fps">–</span> fps</span>
+        <button id="flipBtn" class="ghost">Flip camera</button>
+      </div>
+    </div>
+    <div id="camStatus" class="small muted" style="margin-top:6px">–</div>
+    <details class="tune">
+      <summary>Tune tracking</summary>
+      <div class="row" style="margin-top:10px">
+        <button id="capOpen">Capture open hand</button>
+        <button id="capFist">Capture fist</button>
+        <button id="resetCal" class="ghost">Reset</button>
+      </div>
+      <p class="small muted">Hold your hand open and flat → <i>Capture open hand</i>. Make a tight fist →
+        <i>Capture fist</i>. Fine-tune each finger below (raw joint angle in degrees).</p>
+      <label class="small muted">Smoothing <output id="alphaOut"></output>
+        <input id="alpha" class="mini" type="range" min="0.05" max="1" step="0.01"></label>
+      <div class="grid" id="calGrid">
+        <span class="h">Finger</span><span class="h">Open °</span><span class="h">Curled °</span>
+      </div>
+    </details>
+  </section>
+
+  <section id="fingersCard" class="card fingers"></section>
+
+  <button id="animBtn" class="primary" disabled>Play animation</button>
+
+  <footer><b>JOEBOTICS</b><br>Joebot Hand controller<br><span id="buildInfo" class="small"></span></footer>
+</div>
+
+<script type="module">
+const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+const SEND_MS = 33;          // at most ~30 messages/s; newest value wins
+const KEEPALIVE_MS = 500;    // resend while idle: the hand opens itself after 2 s of silence
+const FRESH_MS = 250;        // tracking result older than this counts as "no hand"
+const BACKOFF_MIN_MS = 500, BACKOFF_MAX_MS = 8000, CONNECT_TIMEOUT_MS = 4000;
+// Same origin as the page: wss://192.168.4.1/ws when the hand serves it.
+const DEFAULT_URL = location.host
+  ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+  : 'wss://192.168.4.1/ws';
+
+const $ = (id) => document.getElementById(id);
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* storage unavailable */ } },
+};
+
+// ======================= finger sliders =======================
+const sliderVals = [0, 0, 0, 0, 0];
+let dirty = false;
+let synced = false;  // sliders mode only sends after the hand has reported its position
+const sliders = FINGERS.map((name, i) => {
+  const d = document.createElement('div');
+  d.className = 'finger';
+  d.innerHTML = `<div class="flabel"><span>${name}</span><span>0%</span></div>
+                 <input type="range" min="0" max="100" value="0" aria-label="${name} curl">`;
+  $('fingersCard').appendChild(d);
+  const input = d.querySelector('input'), out = d.querySelector('.flabel span:last-child');
+  input.addEventListener('input', () => {
+    if (mode !== 'sliders') return;
+    sliderVals[i] = +input.value;
+    paintSlider(i, sliderVals[i]);
+    dirty = true;
+  });
+  return { input, out };
+});
+function paintSlider(i, v) {
+  sliders[i].input.value = v;
+  sliders[i].input.style.setProperty('--p', v + '%');
+  sliders[i].out.textContent = v + '%';
+}
+function showSliders(vals) { vals.forEach((v, i) => paintSlider(i, v)); }
+
+// ======================= mode =======================
+let mode = 'sliders';
+function setMode(m) {
+  if (m === mode) return;
+  mode = m;
+  $('modeSliders').setAttribute('aria-pressed', m === 'sliders');
+  $('modeCamera').setAttribute('aria-pressed', m === 'camera');
+  $('cameraCard').hidden = m !== 'camera';
+  sliders.forEach((s) => { s.input.disabled = m === 'camera'; });
+  if (m === 'camera') {
+    startTracking();
+  } else {
+    stopTracking();
+    // Carry on from wherever the camera left the hand.
+    if (lastSent) { sliderVals.splice(0, 5, ...lastSent); showSliders(sliderVals); synced = true; }
+  }
+}
+$('modeSliders').addEventListener('click', () => setMode('sliders'));
+$('modeCamera').addEventListener('click', () => setMode('camera'));
+
+// ======================= hand link =======================
+const wsUrlEl = $('wsUrl'), connectBtn = $('connectBtn'), linkPill = $('linkPill'), linkText = $('linkText');
+wsUrlEl.value = store.get('joebot.wsUrl', DEFAULT_URL);
+wsUrlEl.addEventListener('change', () => store.set('joebot.wsUrl', wsUrlEl.value.trim() || DEFAULT_URL));
+
+let ws = null, wantConnected = false, backoff = BACKOFF_MIN_MS, attempt = 0;
+let retryTimer = null, connectTimer = null;
+let lastSent = null, lastSentT = 0;
+const sendTimes = [];
+
+function setLink(kind, pill, text) {
+  linkPill.className = 'pill ' + kind;
+  linkPill.textContent = pill;
+  linkText.textContent = text;
+  $('animBtn').disabled = !(ws && ws.readyState === WebSocket.OPEN);
+}
+
+function openSocket() {
+  clearTimeout(retryTimer);
+  const url = wsUrlEl.value.trim() || DEFAULT_URL;
+  // Browsers refuse ws:// from an https:// page; say why instead of failing silently.
+  if (location.protocol === 'https:' && /^ws:/i.test(url)) {
+    $('mixedNotice').hidden = false;
+    wantConnected = false;
+    connectBtn.textContent = 'Connect';
+    connectBtn.classList.add('primary');
+    setLink('bad', 'blocked', 'Blocked: an https page can’t open ws://');
+    return;
+  }
+  $('mixedNotice').hidden = true;
+  attempt++;
+  setLink('warn', 'connecting', attempt > 1 ? `Connecting… (try ${attempt})` : 'Connecting…');
+  let sock;
+  try {
+    sock = new WebSocket(url);
+  } catch (e) {
+    wantConnected = false;
+    connectBtn.textContent = 'Connect';
+    connectBtn.classList.add('primary');
+    setLink('bad', 'error', 'Invalid address: ' + url);
+    return;
+  }
+  ws = sock;
+  connectTimer = setTimeout(() => { if (sock.readyState === WebSocket.CONNECTING) sock.close(); }, CONNECT_TIMEOUT_MS);
+  sock.onopen = () => {
+    clearTimeout(connectTimer);
+    backoff = BACKOFF_MIN_MS;
+    attempt = 0;
+    setLink('ok', 'online', 'Connected to the hand');
+  };
+  // The hand reports its actual position on connect, after the animation,
+  // and when its watchdog opens it. Sliders adopt it.
+  sock.onmessage = (e) => {
+    const p = String(e.data).split(',').map(Number);
+    if (p.length !== 5 || !p.every((v) => Number.isInteger(v) && v >= 0 && v <= 100)) return;
+    $('espState').textContent = p.join(',');
+    if (mode === 'sliders') { sliderVals.splice(0, 5, ...p); showSliders(p); dirty = false; }
+    synced = true;
+  };
+  sock.onclose = () => {
+    clearTimeout(connectTimer);
+    if (ws === sock) ws = null;
+    synced = false;
+    if (!wantConnected) { setLink('', 'offline', 'Not connected'); return; }
+    const delay = backoff;
+    backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
+    setLink('bad', 'retrying', `Can’t reach the hand — retrying in ${(delay / 1000).toFixed(1)} s`);
+    retryTimer = setTimeout(openSocket, delay);
+  };
+}
+
+connectBtn.addEventListener('click', () => {
+  wantConnected = !wantConnected;
+  connectBtn.textContent = wantConnected ? 'Disconnect' : 'Connect';
+  connectBtn.classList.toggle('primary', !wantConnected);
+  if (wantConnected) {
+    backoff = BACKOFF_MIN_MS;
+    attempt = 0;
+    openSocket();
+  } else {
+    clearTimeout(retryTimer);
+    clearTimeout(connectTimer);
+    if (ws) ws.close(); else setLink('', 'offline', 'Not connected');
+  }
+});
+
+$('animBtn').addEventListener('click', () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send('A');
+  if (mode === 'sliders') { sliderVals.fill(0); showSliders(sliderVals); dirty = false; }  // it ends open
+});
+
+// One tick per SEND_MS: sends at most one message with the newest values.
+setInterval(() => {
+  const now = performance.now();
+  while (sendTimes.length && now - sendTimes[0] > 1000) sendTimes.shift();
+  $('sendHz').textContent = sendTimes.length;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  let vals;
+  if (mode === 'sliders') {
+    if (!synced) return;  // wait for the hand's position so a fresh page can't yank the fingers
+    if (!dirty && now - lastSentT < KEEPALIVE_MS) return;
+    vals = sliderVals.slice();
+  } else if (!liveEl.checked) {
+    // Frozen: hold the last pose; resending keeps the hand's watchdog happy.
+    if (!lastSent || now - lastSentT < KEEPALIVE_MS) return;
+    vals = lastSent;
+  } else {
+    // Camera: no fresh tracking -> send nothing; the hand opens itself after 2 s.
+    if (!camCurls || now - camCurlsT > FRESH_MS) return;
+    vals = camCurls.map((v) => Math.round(clamp(v, 0, 1) * 100));
+    const unchanged = lastSent && vals.every((v, i) => v === lastSent[i]);
+    if (unchanged && now - lastSentT < KEEPALIVE_MS) return;
+  }
+  if (ws.bufferedAmount > 0) return;  // previous message still going out: drop, don't queue
+  ws.send(vals.join(','));
+  dirty = false;
+  lastSent = vals;
+  lastSentT = now;
+  sendTimes.push(now);
+  $('lastSent').textContent = vals.join(',');
+}, SEND_MS);
+
+// ======================= camera tracking =======================
+// Curl math copied from tracking/hand_tracking.html - keep in sync.
+const DEFAULT_CAL = [{ min: 50, max: 190 }, { min: 25, max: 200 }, { min: 25, max: 200 }, { min: 25, max: 200 }, { min: 25, max: 200 }];
+const FINGER_JOINTS = [null, [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]];
+const BONES = [
+  [0, 1, 0], [1, 2, 0], [2, 3, 0], [3, 4, 0], [0, 5, -1], [5, 6, 1], [6, 7, 1], [7, 8, 1],
+  [5, 9, -1], [9, 10, 2], [10, 11, 2], [11, 12, 2], [9, 13, -1], [13, 14, 3], [14, 15, 3], [15, 16, 3],
+  [13, 17, -1], [0, 17, -1], [17, 18, 4], [18, 19, 4], [19, 20, 4],
+];
+const sub = (a, b) => [a.x - b.x, a.y - b.y, a.z - b.z];
+const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+const len = (u) => Math.hypot(u[0], u[1], u[2]);
+const unit = (u) => { const n = len(u) || 1; return [u[0] / n, u[1] / n, u[2] / n]; };
+const removeAxis = (u, axis) => { const d = dot(u, axis); return [u[0] - axis[0] * d, u[1] - axis[1] * d, u[2] - axis[2] * d]; };
+function angleDeg(u, v) {
+  const n = len(u) * len(v);
+  return n < 1e-12 ? 0 : Math.acos(clamp(dot(u, v) / n, -1, 1)) * 180 / Math.PI;
+}
+const bend = (a, b, c) => angleDeg(sub(b, a), sub(c, b));
+// World landmarks -> raw curl angle per finger (degrees).
+function fingerAngles(w) {
+  const knuckles = unit(sub(w[5], w[17]));  // pinky MCP -> index MCP
+  const out = [bend(w[1], w[2], w[3]) + bend(w[2], w[3], w[4]) + angleDeg(sub(w[2], w[1]), knuckles)];
+  for (let f = 1; f < 5; f++) {
+    const [mcp, pip, dip, tip] = FINGER_JOINTS[f];
+    const mcpFlex = angleDeg(removeAxis(sub(w[mcp], w[0]), knuckles), removeAxis(sub(w[pip], w[mcp]), knuckles));
+    out.push(mcpFlex + bend(w[mcp], w[pip], w[dip]) + bend(w[pip], w[dip], w[tip]));
+  }
+  return out;
+}
+const normalize = (angle, c) => (c.max === c.min ? 0 : clamp((angle - c.min) / (c.max - c.min), 0, 1));
+
+let cal = store.get('joebot.cal', null);
+if (!Array.isArray(cal) || cal.length !== 5) cal = DEFAULT_CAL.map((c) => ({ ...c }));
+let alpha = store.get('joebot.alpha', 0.35);
+const saveTune = () => { store.set('joebot.cal', cal); store.set('joebot.alpha', alpha); };
+
+// tune panel
+const calRows = FINGERS.map((name, i) => {
+  const grid = $('calGrid');
+  const label = document.createElement('span');
+  label.className = 'small';
+  label.textContent = name;
+  const mk = (key) => {
+    const cell = document.createElement('label');
+    cell.innerHTML = `<output></output><input type="range" class="mini" min="0" max="360" step="1">`;
+    const input = cell.querySelector('input'), out = cell.querySelector('output');
+    input.addEventListener('input', () => { cal[i][key] = +input.value; sync(); saveTune(); });
+    return { cell, input, out };
+  };
+  const mn = mk('min'), mx = mk('max');
+  grid.append(label, mn.cell, mx.cell);
+  const sync = () => {
+    mn.input.value = cal[i].min; mn.input.style.setProperty('--p', (cal[i].min / 3.6) + '%'); mn.out.textContent = cal[i].min + '°';
+    mx.input.value = cal[i].max; mx.input.style.setProperty('--p', (cal[i].max / 3.6) + '%'); mx.out.textContent = cal[i].max + '°';
+  };
+  sync();
+  return { sync };
+});
+const alphaEl = $('alpha');
+const paintAlpha = () => { alphaEl.value = alpha; alphaEl.style.setProperty('--p', ((alpha - 0.05) / 0.95 * 100) + '%'); $('alphaOut').textContent = alpha.toFixed(2); };
+paintAlpha();
+alphaEl.addEventListener('input', () => { alpha = +alphaEl.value; paintAlpha(); saveTune(); });
+$('capOpen').addEventListener('click', () => capture('min'));
+$('capFist').addEventListener('click', () => capture('max'));
+$('resetCal').addEventListener('click', () => { cal = DEFAULT_CAL.map((c) => ({ ...c })); calRows.forEach((r) => r.sync()); saveTune(); });
+function capture(key) {
+  if (smoothed.some((v) => v == null)) { camMsg('Show your hand first', true); return; }
+  smoothed.forEach((v, i) => { cal[i][key] = Math.round(v); });
+  calRows.forEach((r) => r.sync());
+  saveTune();
+  camMsg(key === 'min' ? 'Open hand captured' : 'Fist captured');
+}
+
+// ---------- loading hand tracking (with progress) ----------
+const MP_VERSION = '1.0.1';
+const MP_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
+const MP_SOURCES = [
+  // served by the hand (upload_fs.sh puts these in its flash)
+  { bundle: './mp/vision_bundle.esm.js', wasm: './mp/wasm', model: './mp/hand_landmarker.task' },
+  // local preview from the repo (tracking/fetch_vendor.sh)
+  { bundle: `../tracking/vendor/tasks-vision-${MP_VERSION}/vision_bundle.esm.js`,
+    wasm: `../tracking/vendor/tasks-vision-${MP_VERSION}/wasm`, model: '../hand_landmarker.task' },
+  // online fallback
+  { bundle: `${MP_CDN}/vision_bundle.mjs`, wasm: `${MP_CDN}/wasm`,
+    model: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task' },
+];
+let manifest = null;  // uncompressed sizes of the big files, written by upload_fs.sh
+const manifestReady = fetch('./manifest.json', { cache: 'no-cache' })
+  .then((r) => (r.ok ? r.json() : null)).then((m) => { manifest = m; return m; }).catch(() => null);
+
+async function fetchBytes(url, onChunk) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  if (!res.body) { const b = new Uint8Array(await res.arrayBuffer()); onChunk(b.length); return b; }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    onChunk(value.length);
+  }
+  const out = new Uint8Array(got);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+// Downloads the engine and model once, with progress, and hands MediaPipe the
+// bytes directly (blob URLs / buffer) so nothing is fetched twice - pages with
+// a tapped-through certificate warning get no HTTP cache in Chrome.
+async function createLandmarker(progress) {
+  await manifestReady;
+  let lastErr = null;
+  for (const src of MP_SOURCES) {
+    let mp;
+    try { mp = await import(src.bundle); } catch (e) { lastErr = e; continue; }
+    try {
+      const files = [
+        ['engine loader', `${src.wasm}/vision_wasm_internal.js`, 'mp/wasm/vision_wasm_internal.js'],
+        ['engine', `${src.wasm}/vision_wasm_internal.wasm`, 'mp/wasm/vision_wasm_internal.wasm'],
+        ['hand model', src.model, 'mp/hand_landmarker.task'],
+      ];
+      const total = manifest ? files.reduce((s, f) => s + (manifest.sizes[f[2]] || 0), 0) : 0;
+      let got = 0;
+      const bytes = [];
+      for (const [label, url] of files) {
+        bytes.push(await fetchBytes(url, (n) => { got += n; progress(got, total, label); }));
+      }
+      progress(total || got, total || got, 'starting');
+      const fileset = {
+        wasmLoaderPath: URL.createObjectURL(new Blob([bytes[0]], { type: 'text/javascript' })),
+        wasmBinaryPath: URL.createObjectURL(new Blob([bytes[1]], { type: 'application/wasm' })),
+      };
+      for (const delegate of ['GPU', 'CPU']) {
+        try {
+          return await mp.HandLandmarker.createFromOptions(fileset, {
+            baseOptions: { modelAssetBuffer: bytes[2], delegate }, runningMode: 'VIDEO', numHands: 1,
+            minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+          });
+        } catch (e) { lastErr = e; }
+      }
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('Could not load hand tracking');
+}
+
+function showLoader(on) { $('loader').hidden = !on; }
+function loaderProgress(got, total, label) {
+  const bar = $('loaderProgress');
+  bar.classList.toggle('indeterminate', !total);
+  if (total) $('loaderBar').style.width = (100 * Math.min(1, got / total)).toFixed(1) + '%';
+  const mb = (n) => (n / 1048576).toFixed(1);
+  $('loaderDetail').textContent = label === 'starting' ? 'starting the tracker…'
+    : total ? `${label} · ${Math.round(100 * got / total)}% · ${mb(got)} / ${mb(total)} MB` : `${label} · ${mb(got)} MB`;
+}
+
+// ---------- camera ----------
+const video = document.createElement('video');
+video.playsInline = true;
+video.muted = true;
+const canvas = $('view'), ctx = canvas.getContext('2d');
+const liveEl = $('live');
+let landmarker = null, landmarkerLoading = null, stream = null, tracking = false, facing = 'user', wakeLock = null;
+let camCurls = null, camCurlsT = 0, handPresent = false, lastVideoTime = -1, fps = 0, lastFrameT = 0;
+const smoothed = [null, null, null, null, null];
+
+function camMsg(text, isErr = false) { const el = $('camStatus'); el.textContent = text; el.className = 'small ' + (isErr ? 'err' : 'muted'); }
+function setHandPill(kind, text) { const el = $('handPill'); el.className = 'pill overlay ' + kind; el.textContent = text; }
+
+async function startTracking() {
+  tracking = true;
+  setHandPill('warn', 'starting…');
+  try {
+    if (!window.isSecureContext) throw Object.assign(new Error('The camera needs a secure page (https:// or localhost).'), { name: 'Insecure' });
+    camMsg('Starting camera…');
+    await openCamera();
+    if (!landmarker) {
+      camMsg('Loading hand tracking…');
+      showLoader(true);
+      loaderProgress(0, 0, 'connecting');
+      landmarkerLoading = landmarkerLoading || createLandmarker(loaderProgress);
+      try { landmarker = await landmarkerLoading; } finally { landmarkerLoading = null; showLoader(false); }
+    }
+    if (!tracking) return;  // switched back to sliders while loading
+    camMsg('Show your hand to the camera');
+    requestWakeLock();
+    requestAnimationFrame(trackFrame);
+  } catch (e) {
+    const msg = e.name === 'NotAllowedError' ? 'Camera permission denied — allow it in your browser settings'
+      : e.name === 'NotFoundError' ? 'No camera found' : e.message || String(e);
+    camMsg(msg, true);
+    setHandPill('bad', 'no camera');
+  }
+}
+async function openCamera() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false,
+  });
+  video.srcObject = stream;
+  await video.play();
+}
+function stopTracking() {
+  tracking = false;
+  camCurls = null;
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+async function requestWakeLock() {  // keep the phone screen on while tracking
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* not supported */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && tracking) requestWakeLock(); });
+$('flipBtn').addEventListener('click', async () => {
+  facing = facing === 'user' ? 'environment' : 'user';
+  try { await openCamera(); } catch (e) { camMsg('Could not switch camera: ' + e.message, true); }
+});
+liveEl.addEventListener('change', () => { $('liveLabel').textContent = liveEl.checked ? 'Live' : 'Frozen'; });
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || mode !== 'camera' || ['INPUT', 'BUTTON', 'SUMMARY'].includes(document.activeElement.tagName)) return;
+  e.preventDefault();
+  liveEl.checked = !liveEl.checked;
+  liveEl.dispatchEvent(new Event('change'));
+});
+
+const curlColor = (t) => `hsl(${Math.round(28 + (1 - t) * 112)} 90% 55%)`;  // green (open) -> orange (curled)
+function draw(image, curls) {
+  const w = canvas.width, h = canvas.height;
+  ctx.save();
+  if (facing === 'user') { ctx.translate(w, 0); ctx.scale(-1, 1); }  // selfie view mirrors
+  ctx.drawImage(video, 0, 0, w, h);
+  if (image) {
+    ctx.lineWidth = Math.max(3, w / 180);
+    for (const [a, b, f] of BONES) {
+      ctx.strokeStyle = f < 0 ? 'rgba(255,255,255,.7)' : curlColor(curls[f]);
+      ctx.beginPath();
+      ctx.moveTo(image[a].x * w, image[a].y * h);
+      ctx.lineTo(image[b].x * w, image[b].y * h);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#fff';
+    for (const p of image) { ctx.beginPath(); ctx.arc(p.x * w, p.y * h, Math.max(2.5, w / 260), 0, 2 * Math.PI); ctx.fill(); }
+  }
+  ctx.restore();
+}
+function trackFrame(now) {
+  if (!tracking) return;
+  requestAnimationFrame(trackFrame);
+  if (!landmarker || video.readyState < 2 || video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+  if (video.videoWidth && canvas.width !== video.videoWidth) { canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
+  const res = landmarker.detectForVideo(video, performance.now());
+  if (lastFrameT) fps = fps ? fps * 0.9 + (1000 / (now - lastFrameT)) * 0.1 : 1000 / (now - lastFrameT);
+  lastFrameT = now;
+  $('fps').textContent = fps.toFixed(0);
+
+  const world = res.worldLandmarks && res.worldLandmarks[0];
+  const image = res.landmarks && res.landmarks[0];
+  const curls = [0, 0, 0, 0, 0];
+  if (world && image) {
+    fingerAngles(world).forEach((raw, i) => {
+      // EMA on the raw angle; restart from the raw value when the hand reappears.
+      smoothed[i] = (!handPresent || smoothed[i] == null) ? raw : alpha * raw + (1 - alpha) * smoothed[i];
+      curls[i] = normalize(smoothed[i], cal[i]);
+    });
+    handPresent = true;
+    camCurls = curls.slice();
+    camCurlsT = performance.now();
+    showSliders(curls.map((v) => Math.round(v * 100)));
+    setHandPill('ok', 'tracking');
+  } else {
+    handPresent = false;
+    setHandPill('warn', 'no hand');
+  }
+  draw(image, curls);
+}
+
+// ---------- offline cache ----------
+// The service worker keeps everything on the device after the first load.
+// Browsers only allow it when the certificate is trusted, so if it fails on
+// the hand, suggest installing the Joebotics certificate.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('./sw.js').then(() => {
+    $('buildInfo').dataset.cache = 'offline cache on';
+  }).catch(() => {
+    $('buildInfo').dataset.cache = 'offline cache off';
+    if (location.protocol === 'https:') $('certHint').hidden = false;
+  }).finally(showBuildInfo);
+}
+function showBuildInfo() {
+  const parts = [manifest && manifest.version ? 'build ' + manifest.version : '', $('buildInfo').dataset.cache || ''];
+  $('buildInfo').textContent = parts.filter(Boolean).join(' · ');
+}
+manifestReady.then(showBuildInfo);
+
+// Console helpers: joebot.simulateHand([0..1 x5]) feeds the link as if the
+// camera saw that pose; joebot.preloadTracking() downloads the tracking
+// files (with the loader) without turning the camera on.
+window.joebot = {
+  simulateHand(v) { camCurls = v.slice(); camCurlsT = performance.now(); },
+  async preloadTracking() {
+    if (landmarker) return 'already loaded';
+    showLoader(true);
+    loaderProgress(0, 0, 'connecting');
+    landmarkerLoading = landmarkerLoading || createLandmarker(loaderProgress);
+    try { landmarker = await landmarkerLoading; return 'loaded'; } finally { landmarkerLoading = null; showLoader(false); }
+  },
+  get state() { return { mode, synced, lastSent, sliderVals: sliderVals.slice(), cal, alpha }; },
+};
+
+// Let the splash play briefly on a fast load; hide it straight away on a slow one.
+setTimeout(() => {
+  const s = $('splash');
+  s.classList.add('gone');
+  setTimeout(() => s.remove(), 600);
+}, Math.max(0, 900 - performance.now()));
+</script>
+</body>
+</html>
