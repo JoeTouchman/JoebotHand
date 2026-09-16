@@ -284,6 +284,7 @@ const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
 const SEND_MS = 33;          // at most ~30 messages/s; newest value wins
 const KEEPALIVE_MS = 500;    // resend while idle: the hand opens itself after 2 s of silence
 const FRESH_MS = 250;        // tracking result older than this counts as "no hand"
+const AUTO_LIMP_MS = 60000;  // nothing commanded for this long -> let the servos go limp
 const BACKOFF_MIN_MS = 500, BACKOFF_MAX_MS = 8000, CONNECT_TIMEOUT_MS = 4000;
 // Same origin as the page: wss://192.168.4.1/ws when the hand serves it.
 const DEFAULT_URL = location.host
@@ -313,6 +314,7 @@ const sliders = FINGERS.map((name, i) => {
     sliderVals[i] = +input.value;
     paintSlider(i, sliderVals[i]);
     dirty = true;
+    markActive();
   });
   return { input, out };
 });
@@ -330,11 +332,40 @@ const presetBtns = [['All open', 0], ['Half', 50], ['All closed', 100]].map(([la
     sliderVals.fill(value);
     showSliders(sliderVals);
     dirty = true;
+    markActive();
   });
   presetRow.appendChild(b);
   return b;
 });
 $('fingersCard').appendChild(presetRow);
+
+// Limp: tell the servos to stop holding. They stay limp until something
+// commands a position again (a slider, a preset, or a tracked hand).
+const limpRow = document.createElement('div');
+limpRow.className = 'row';
+limpRow.style.marginTop = '8px';
+const limpBtn = document.createElement('button');
+limpBtn.textContent = 'Limp';
+limpBtn.className = 'ghost';
+limpBtn.addEventListener('click', () => goLimp(false));
+const limpNote = document.createElement('span');
+limpNote.className = 'small muted';
+limpRow.append(limpBtn, limpNote);
+$('fingersCard').appendChild(limpRow);
+
+function goLimp(automatic) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send('R');
+  limp = true;
+  limpNote.textContent = automatic ? 'limp after a minute idle - move something to wake'
+                                   : 'limp - move something to wake';
+}
+function markActive() {
+  lastActiveMs = performance.now();
+  if (limp) {
+    limp = false;
+    limpNote.textContent = '';
+  }
+}
 
 function paintSlider(i, v) {
   sliders[i].input.value = v;
@@ -372,6 +403,7 @@ wsUrlEl.addEventListener('change', () => store.set('joebot.wsUrl', wsUrlEl.value
 let ws = null, wantConnected = false, backoff = BACKOFF_MIN_MS, attempt = 0;
 let retryTimer = null, connectTimer = null;
 let lastSent = null, lastSentT = 0;
+let limp = false, lastActiveMs = performance.now();
 const sendTimes = [];
 
 function setLink(kind, pill, text) {
@@ -453,6 +485,7 @@ connectBtn.addEventListener('click', () => {
 $('animBtn').addEventListener('click', () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send('A');
+  markActive();
   if (mode === 'sliders') { sliderVals.fill(0); showSliders(sliderVals); dirty = false; }  // it ends open
 });
 
@@ -462,10 +495,20 @@ setInterval(() => {
   while (sendTimes.length && now - sendTimes[0] > 1000) sendTimes.shift();
   $('sendHz').textContent = sendTimes.length;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (limp) return;  // "R" disarmed the hand's watchdog; nothing goes out until you act
+
+  // Nothing commanded for a while: let the servos rest instead of holding a
+  // pose. Freeze is a deliberate hold, so it is exempt.
+  if (now - lastActiveMs > AUTO_LIMP_MS && !(mode === 'camera' && !liveEl.checked)) {
+    goLimp(true);
+    return;
+  }
 
   let vals;
   if (mode === 'sliders') {
-    if (!synced) return;  // wait for the hand's position so a fresh page can't yank the fingers
+    // Wait for the hand's position so a fresh page can't yank the fingers -
+    // unless you've already moved something yourself.
+    if (!synced && !dirty) return;
     if (!dirty && now - lastSentT < KEEPALIVE_MS) return;
     vals = sliderVals.slice();
   } else if (!liveEl.checked) {
@@ -759,6 +802,7 @@ function trackFrame(now) {
     handPresent = true;
     camCurls = curls.slice();
     camCurlsT = performance.now();
+    markActive();
     showSliders(curls.map((v) => Math.round(v * 100)));
     setHandPill('ok', 'tracking');
   } else {
@@ -773,13 +817,38 @@ function trackFrame(now) {
 // Browsers only allow it when the certificate is trusted, so if it fails on
 // the hand, suggest installing the Joebotics certificate.
 if ('serviceWorker' in navigator && window.isSecureContext) {
-  navigator.serviceWorker.register('./sw.js').then(() => {
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
     $('buildInfo').dataset.cache = 'offline cache on';
+    // A new upload installs a new worker: offer one tap to show it, instead
+    // of the two reloads a cache-first worker otherwise needs.
+    reg.addEventListener('updatefound', () => {
+      const fresh = reg.installing;
+      if (!fresh) return;
+      fresh.addEventListener('statechange', () => {
+        if (fresh.state === 'installed' && navigator.serviceWorker.controller) showUpdateBar();
+      });
+    });
   }).catch(() => {
     $('buildInfo').dataset.cache = 'offline cache off';
     if (location.protocol === 'https:') $('certHint').hidden = false;
   }).finally(showBuildInfo);
 }
+function showUpdateBar() {
+  if (document.getElementById('updateBar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'updateBar';
+  bar.className = 'notice';
+  bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9;display:flex;' +
+                      'align-items:center;justify-content:space-between;gap:12px;margin:0';
+  bar.innerHTML = '<span>New version ready</span>';
+  const reload = document.createElement('button');
+  reload.textContent = 'Reload';
+  reload.className = 'primary';
+  reload.addEventListener('click', () => location.reload());
+  bar.appendChild(reload);
+  document.body.appendChild(bar);
+}
+
 function showBuildInfo() {
   const parts = [manifest && manifest.version ? 'build ' + manifest.version : '', $('buildInfo').dataset.cache || ''];
   $('buildInfo').textContent = parts.filter(Boolean).join(' · ');

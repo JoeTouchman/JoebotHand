@@ -254,6 +254,7 @@ portMUX_TYPE wsMux = portMUX_INITIALIZER_UNLOCKED;
 int wsFrame[NUM_FINGERS];            // newest frame from the phone, 0-100
 volatile bool wsFrameNew = false;
 volatile bool wsAnimRequested = false;
+volatile bool wsRelaxRequested = false;
 volatile uint32_t lastWsMs = 0;
 bool wsHolding = false;              // phone has set the fingers since the last watchdog trip
 
@@ -307,6 +308,11 @@ void handlePhoneText(const char *buf, size_t len) {
     wsAnimRequested = true;
     return;
   }
+  if (strcmp(buf, "R") == 0) {  // limp until the next position arrives
+    lastWsMs = millis();
+    wsRelaxRequested = true;
+    return;
+  }
   int v[NUM_FINGERS], used = 0;
   if (sscanf(buf, "%d,%d,%d,%d,%d%n", &v[0], &v[1], &v[2], &v[3], &v[4], &used) != 5
       || used != (int)len) return;
@@ -321,15 +327,9 @@ void handlePhoneText(const char *buf, size_t len) {
 
 esp_err_t wsHandler(httpd_req_t *req) {
   if (req->method == HTTP_GET) {
-    // Handshake done: tell the new client where the hand is.
-    char buf[32];
-    stateString(buf, sizeof buf);
-    httpd_ws_frame_t f = {};
-    f.final = true;
-    f.type = HTTPD_WS_TYPE_TEXT;
-    f.payload = (uint8_t *)buf;
-    f.len = strlen(buf);
-    httpd_ws_send_frame(req, &f);
+    // Handshake done. The hand's position is sent from scanWsClients() a
+    // moment later: sending it here goes out before the handshake response,
+    // so the browser never sees it.
     return ESP_OK;
   }
   httpd_ws_frame_t frame = {};
@@ -551,10 +551,14 @@ void scanWsClients() {
       if (list[i] == fd) return true;
     return false;
   };
+  char state[32];
+  stateString(state, sizeof state);
   for (int i = 0; i < nNow; i++)
-    if (!has(known, nKnown, now[i]))
+    if (!has(known, nKnown, now[i])) {
       Serial.printf("ws: client connected (socket %d, %d connected, %u KB internal RAM free)\n", now[i], nNow,
                     (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+      wsSendAsync(now[i], state);  // tell it where the fingers are
+    }
   for (int i = 0; i < nKnown; i++)
     if (!has(now, nNow, known[i])) Serial.printf("ws: client disconnected (socket %d)\n", known[i]);
   memcpy(known, now, sizeof now);
@@ -731,6 +735,15 @@ void loop() {
   if (wsAnimRequested) {
     wsAnimRequested = false;
     runAnimation();
+  }
+
+  // Limp: stop pulses and disarm the watchdog, so it doesn't drive the
+  // fingers back open two seconds later. The next position wakes them.
+  if (wsRelaxRequested) {
+    wsRelaxRequested = false;
+    relaxAll();
+    wsHolding = false;
+    Serial.println("phone: limp (servos off until the next position)");
   }
 
   // Watchdog: the phone sends at least every 500 ms while its page is
