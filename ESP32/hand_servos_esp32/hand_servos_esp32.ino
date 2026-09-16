@@ -14,9 +14,9 @@
 // ESP32Servo in this project: on the S3 (v3.2.1) it routes several
 // servos to the same MCPWM output.
 //
-// LEDC budget: the S3 has 8 channels. These 5 servos use 5 (sharing one
-// timer), leaving 3. Planned: status LED (PWM) and buzzer (tone() also
-// takes a channel).
+// LEDC budget: the S3 has 8 channels. 5 servos (ch 0-4, sharing one timer),
+// the buzzer (ch 5) and the status LED (ch 6) use 7, leaving 1 spare.
+// printChannelMap() lists them all at boot and flags any collision.
 
 #include "esp32-hal-periman.h"
 #include "soc/gpio_reg.h"
@@ -129,6 +129,92 @@ void setupBuzzer() {
   buzzerOk = ledcAttachChannel(BUZZER_PIN, BUZZER_IDLE_HZ, BUZZER_RES, BUZZER_CHANNEL);
   if (buzzerOk) ledcWrite(BUZZER_PIN, 0);  // silent until a sound plays
   printBuzzerInfo();
+}
+
+// --- status LED --------------------------------------------------------
+// The switch's LED ring, common anode to 5V, with an S8050 NPN sinking the
+// cathode and its base on GPIO 16 through 330 ohm. The transistor doesn't
+// invert the sense of the PWM: base high -> it conducts -> the LED lights,
+// so duty 0 is off and full duty is full brightness.
+//
+// 12-bit at 5 kHz, deliberately different from the buzzer's 10 bits so the
+// core hands it its own timer rather than sharing the buzzer's - a shared
+// timer would change the LED's frequency every time a note changed pitch.
+//
+// The ring is a 12V part run at 5V, so full brightness may still look weak.
+// That's a hardware limit (its internal resistor); nothing here tries to
+// compensate for it.
+const int LED_PIN = 16;
+const uint8_t LED_CHANNEL = 6;       // asked for by number: servos 0-4, buzzer 5
+const uint8_t LED_RES = 12;
+const uint32_t LED_FREQ = 5000;      // well above flicker, easy on the transistor
+const uint32_t LED_MAX = (1UL << LED_RES) - 1;
+
+const uint32_t BREATHE_MS = 2000;    // one full fade up and back down
+const uint32_t BLINK_ON_MS = 70;     // the double-blink's shape
+const uint32_t BLINK_OFF_MS = 110;
+
+bool ledOk = false;
+bool ledAuto = true;                 // false once a serial command forces a state
+bool ledSolid = false;               // the base state: solid on with a client connected
+uint8_t blinkPhase = 0;              // 0 = idle, else steps left in the double-blink
+uint32_t blinkNextMs = 0;
+extern int wsClients;                // defined with the web server below
+
+// Starts the double-blink and returns; updateLed() walks it and then drops
+// straight back to whichever base state is current.
+void blinkLed() {
+  if (!ledOk) return;
+  blinkPhase = 4;  // on, off, on, off
+  blinkNextMs = millis();
+}
+
+// Called from loop(): never blocks, never delays. Recomputes the duty from
+// the clock each pass, so a slow pass shows up as a slightly coarser fade
+// and nothing else.
+void updateLed() {
+  if (!ledOk) return;
+  if (ledAuto) ledSolid = (wsClients > 0);
+  uint32_t now = millis();
+
+  if (blinkPhase) {
+    if ((int32_t)(now - blinkNextMs) < 0) return;
+    bool on = (blinkPhase % 2) == 0;
+    ledcWrite(LED_PIN, on ? LED_MAX : 0);
+    blinkNextMs = now + (on ? BLINK_ON_MS : BLINK_OFF_MS);
+    blinkPhase--;
+    return;
+  }
+
+  if (ledSolid) {
+    ledcWrite(LED_PIN, LED_MAX);
+    return;
+  }
+
+  // Breathing: a raised cosine over BREATHE_MS, squared so the eye reads
+  // the fade as even instead of rushing through the dim half.
+  float phase = (now % BREATHE_MS) / (float)BREATHE_MS;
+  float t = 0.5f * (1.0f - cosf(2.0f * PI * phase));
+  ledcWrite(LED_PIN, (uint32_t)(t * t * LED_MAX));
+}
+
+void printLedInfo() {
+  if (!ledOk) {
+    Serial.printf("  status LED: GPIO %d FAILED to take LEDC channel %d\n", LED_PIN, LED_CHANNEL);
+    return;
+  }
+  ledc_channel_handle_t *bus = (ledc_channel_handle_t *)perimanGetPinBus(LED_PIN, ESP32_BUS_TYPE_LEDC);
+  Serial.printf("  status LED: GPIO %d, LEDC ch %d (timer %d), now %s, states: "
+                "L0=breathe L1=solid L2=double-blink L3=auto\n",
+                LED_PIN, bus ? bus->channel : -1, bus ? bus->timer_num : -1,
+                !ledAuto ? (ledSolid ? "solid (forced)" : "breathing (forced)")
+                         : (ledSolid ? "solid: client connected" : "breathing: no client"));
+}
+
+void setupLed() {
+  ledOk = ledcAttachChannel(LED_PIN, LED_FREQ, LED_RES, LED_CHANNEL);
+  if (ledOk) ledcWrite(LED_PIN, 0);  // dark until updateLed() takes over
+  printLedInfo();
 }
 
 const uint32_t SERVO_FREQ = 50;      // Hz
@@ -412,6 +498,7 @@ void serviceAnimation() {
   animQueued = false;
   playStartupAnimation();
   playSound(SOUND_DONE);
+  blinkLed();  // double-blink, then back to breathing or solid
   wsFrameNew = false;
   broadcastState();
 }
@@ -789,6 +876,47 @@ void startNetwork() {
   Serial.println("web: open https://192.168.4.1/ (websocket wss://192.168.4.1/ws)");
 }
 
+// Every LEDC user in one table, so a shared channel or a doubled-up pin is
+// obvious at boot instead of showing up as two peripherals fighting. Lives
+// down here because it reads the finger table defined above.
+void printChannelMap() {
+  const char *names[] = {"thumb", "index", "middle", "ring", "pinky", "buzzer", "status LED"};
+  const int pins[] = {FINGERS[0].pin, FINGERS[1].pin, FINGERS[2].pin, FINGERS[3].pin,
+                      FINGERS[4].pin, BUZZER_PIN, LED_PIN};
+  // Configured, not measured: ledcReadFreq() returns 0 for any channel
+  // sitting at duty 0, which is most of them most of the time. The buzzer's
+  // moves with each note; this is the frequency it idles at.
+  const uint32_t freqs[] = {SERVO_FREQ, SERVO_FREQ, SERVO_FREQ, SERVO_FREQ, SERVO_FREQ,
+                            BUZZER_IDLE_HZ, LED_FREQ};
+  const int n = sizeof(pins) / sizeof(pins[0]);
+  int ch[n];
+
+  Serial.printf("LEDC channel map (%d of %d channels used):\n", n, SOC_LEDC_CHANNEL_NUM);
+  for (int i = 0; i < n; i++) {
+    ledc_channel_handle_t *bus = (ledc_channel_handle_t *)perimanGetPinBus(pins[i], ESP32_BUS_TYPE_LEDC);
+    ch[i] = bus ? bus->channel : -1;
+    if (!bus) {
+      Serial.printf("  ch  -  %-10s GPIO %2d  NOT ATTACHED\n", names[i], pins[i]);
+      continue;
+    }
+    Serial.printf("  ch %d  %-10s GPIO %2d  timer %d, %u Hz, %d-bit\n", bus->channel, names[i],
+                  pins[i], bus->timer_num, (unsigned)freqs[i], bus->channel_resolution);
+  }
+
+  bool clash = false;
+  for (int i = 0; i < n; i++) {
+    if (ch[i] < 0) clash = true;
+    for (int j = i + 1; j < n; j++)
+      if (ch[i] == ch[j] || pins[i] == pins[j]) clash = true;
+  }
+  if (clash) {
+    Serial.println("  WARNING: a channel is shared, missing, or two peripherals are on one pin");
+  } else {
+    Serial.printf("  no collisions: %d peripherals, %d distinct channels, %d spare\n", n, n,
+                  SOC_LEDC_CHANNEL_NUM - n);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   // Attach all five permanently and drive each straight to open. A fresh
@@ -800,6 +928,8 @@ void setup() {
   }
   printInfo();
   setupBuzzer();
+  setupLed();
+  printChannelMap();
   startNetwork();
   runAnimation();  // chirp first, then the fingers - both advanced from loop()
 }
@@ -812,6 +942,8 @@ void setup() {
 //   "B0\n"     -> play a sound: B0 boot chirp, B1 done beep, B2 client blip,
 //                 B3 sweep 1-5 kHz. "B3000" holds 3000 Hz for 400 ms, to
 //                 find which frequency is loudest on this piezo.
+//   "L0\n"     -> force the status LED: L0 breathe, L1 solid, L2 double-blink,
+//                 L3 back to automatic (breathe idle, solid with a client)
 void handleSerial() {
   String line = Serial.readStringUntil('\n');
   line.trim();
@@ -828,7 +960,24 @@ void handleSerial() {
   if (line == "?") {
     printInfo();
     printBuzzerInfo();
+    printLedInfo();
+    printChannelMap();
     printNetworkStatus();
+    return;
+  }
+  if (line.startsWith("L")) {
+    int n = line.substring(1).toInt();
+    if (n == 0 || n == 1) {
+      ledAuto = false;
+      ledSolid = (n == 1);
+      Serial.printf("led: forced %s\n", ledSolid ? "solid" : "breathing");
+    } else if (n == 2) {
+      blinkLed();
+      Serial.println("led: double-blink");
+    } else if (n == 3) {
+      ledAuto = true;
+      Serial.println("led: automatic (breathe idle, solid with a client)");
+    }
     return;
   }
   if (line.startsWith("B")) {
@@ -869,6 +1018,7 @@ void loop() {
     runAnimation();
   }
 
+  updateLed();         // breathe / solid / blink; never blocks
   updateBuzzer();      // steps the current sound; never blocks
   serviceAnimation();  // starts the queued animation once the chirp is done
 
