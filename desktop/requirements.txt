@@ -1,0 +1,6 @@
+# finger_test.py and hand_control_web.py only need pyserial.
+pyserial>=3.5
+# hand_control.py (Qt GUI with webcam tracking) also needs these:
+PySide6>=6.6
+opencv-python>=4.8
+mediapipe>=0.10.14
