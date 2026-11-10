@@ -73,18 +73,10 @@ flowchart LR
   [`firmware/diagnostics`](firmware/diagnostics/README.md).
 - **Camera vs. local network:** browsers only allow the camera on secure
   (HTTPS) pages, but a secure page can't talk to an insecure device like the
-  hand. Hosting the app online failed for exactly that reason, so the ESP32
-  now serves the app itself over HTTPS. That needs a certificate the phone
-  trusts, which is hard for a device with no internet:
-  - A self-signed certificate worked but showed a security warning, and
-    browsers then refused to cache the app for offline use.
-  - The fix was a real certificate for my own domain, `hand.joeprojects.com`.
-    I proved I own the domain with a DNS check, pointed the name at the
-    hand's local address (192.168.4.1), and made the hand's built-in DNS
-    server answer that name for phones on its Wi-Fi. Phones now open the
-    page with no warning.
-  - The certificate is stored in the ESP32's flash, separate from the
-    firmware, so renewing it just means re-uploading one file.
+  hand. Hosting the app online failed because of that, so the ESP32
+  now serves the app itself over HTTPS, using a real certificate for my own
+  domain (`hand.joeprojects.com`) that points to the hand's local address.
+  Phones open it with no security warning, even with no internet.
 - **Fitting a neural network on a microcontroller's flash:** the app,
   MediaPipe's WebAssembly runtime and the model are gzipped into 75% of a
   12 MB partition and served with download progress.
