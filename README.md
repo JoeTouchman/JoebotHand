@@ -109,8 +109,8 @@ flowchart LR
   <img src="docs/forearm-versions.jpg" width="560" alt="Three 3D-printed forearms side by side, numbered 1 to 3: the original white one, a silver one with a round base and button hole, and the final version with a hollow base and wire cutouts.">
 </p>
 
-1. **Original (white):** the plain forearm from the tutorial design.
-2. **Version 2:** my redesign. A solid round base so the hand stands on its
+1. **Original:** the plain forearm from the tutorial design.
+2. **Version 2:** my first redesign. A solid round base so the hand stands on its
    own, a press fit so the hand slides on and off easily, and a hole for the
    power button.
 3. **Version 3 (current):** the base is hollowed out (still round) so the
@@ -119,6 +119,7 @@ flowchart LR
 
 <p align="center">
   <img src="docs/forearm-v3-render.png" width="260" alt="3D render of the version 3 forearm: a slanted shell on a round base ring, with the button hole and a cutout for the wires.">
+  <br><sub><a href="hardware/forearm_v3.stl">Version 3 forearm and stand (STL)</a></sub>
 </p>
 
 ## Credits and tools
