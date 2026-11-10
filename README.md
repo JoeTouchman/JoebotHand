@@ -41,7 +41,7 @@ five servos that pull each finger closed.
 ## How it works
 
 <p align="center">
-  <img src="docs/how-it-works.svg" width="720" alt="Flow: on the phone, the camera feeds MediaPipe, which finds 21 hand points in 3D and turns them into finger curl from 0 to 100 percent. That goes over Wi-Fi on a secure WebSocket about 30 times a second to the ESP32-S3 on the hand, which converts it to servo angles, drives five servos with PWM, and the servos pull the fingers with strings.">
+  <img src="docs/how-it-works.svg" width="640" alt="Flow: on the phone, the camera's video frames go to MediaPipe, whose 21 hand landmarks feed the curl calculation (0 to 100 percent per finger). That goes over Wi-Fi on a secure WebSocket about 30 times a second to the ESP32-S3 in the hand, which drives five MG90S servos with 50 Hz PWM, and the servos pull the fingers with strings.">
 </p>
 
 1. **Tracking** (`web/index.html`): MediaPipe finds 21 points on your hand in
