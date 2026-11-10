@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 372" width="900" height="372" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>How the hand works</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#57606a"/>
+    </marker>
+    <style>
+      .phone { fill: #ddf4ff; stroke: #54aeff; stroke-width: 1.5; }
+      .hand  { fill: #fff8c5; stroke: #d4a72c; stroke-width: 1.5; }
+      .t { fill: #1f2328; font-size: 21px; font-weight: 600; text-anchor: middle; }
+      .s { fill: #57606a; font-size: 16px; text-anchor: middle; }
+      .g { fill: #57606a; font-size: 14px; font-weight: 700; letter-spacing: 1.5px; }
+      .e { fill: #57606a; font-size: 15px; }
+      .w { stroke: #57606a; stroke-width: 2; fill: none; }
+    </style>
+  </defs>
+  <rect width="900" height="372" rx="14" fill="#ffffff"/>
+
+  <text class="g" x="20" y="28">ON THE PHONE</text>
+  <rect class="phone" x="20"  y="40" width="210" height="90" rx="12"/>
+  <text class="t" x="125" y="80">Phone camera</text>
+  <text class="s" x="125" y="104">video frames</text>
+
+  <rect class="phone" x="345" y="40" width="210" height="90" rx="12"/>
+  <text class="t" x="450" y="80">MediaPipe</text>
+  <text class="s" x="450" y="104">21 hand points in 3D</text>
+
+  <rect class="phone" x="670" y="40" width="210" height="90" rx="12"/>
+  <text class="t" x="775" y="80">Finger curl</text>
+  <text class="s" x="775" y="104">0–100%, smoothed</text>
+
+  <line class="w" x1="230" y1="85" x2="343" y2="85" marker-end="url(#a)"/>
+  <line class="w" x1="555" y1="85" x2="668" y2="85" marker-end="url(#a)"/>
+
+  <line class="w" x1="775" y1="130" x2="775" y2="228" marker-end="url(#a)"/>
+  <text class="e" x="760" y="176" text-anchor="end">Wi-Fi: secure WebSocket,</text>
+  <text class="e" x="760" y="195" text-anchor="end">~30 updates per second</text>
+
+  <rect class="hand" x="670" y="230" width="210" height="90" rx="12"/>
+  <text class="t" x="775" y="270">ESP32-S3</text>
+  <text class="s" x="775" y="294">% → servo angle</text>
+
+  <rect class="hand" x="345" y="230" width="210" height="90" rx="12"/>
+  <text class="t" x="450" y="270">5 servos</text>
+  <text class="s" x="450" y="294">one per finger</text>
+
+  <rect class="hand" x="20"  y="230" width="210" height="90" rx="12"/>
+  <text class="t" x="125" y="270">Fingers</text>
+  <text class="s" x="125" y="294">open and close</text>
+
+  <line class="w" x1="670" y1="275" x2="557" y2="275" marker-end="url(#a)"/>
+  <text class="e" x="612" y="264" text-anchor="middle">PWM</text>
+  <line class="w" x1="345" y1="275" x2="232" y2="275" marker-end="url(#a)"/>
+  <text class="e" x="288" y="264" text-anchor="middle">strings</text>
+
+  <text class="g" x="20" y="350">ON THE HAND</text>
+</svg>

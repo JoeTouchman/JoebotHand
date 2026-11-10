@@ -40,16 +40,9 @@ five servos that pull each finger closed.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[Phone camera] --> B["MediaPipe hand landmarks<br/>(in the browser)"]
-    B --> C["Finger curl 0–100%<br/>smoothing + calibration"]
-    C -- "WebSocket over HTTPS<br/>~30 updates/s" --> D[ESP32-S3]
-    D -- "50 Hz PWM, one channel per finger" --> E[5 servos]
-    E -- "strings" --> F[Fingers]
-```
-
-<img src="docs/app.jpg" align="right" width="250" hspace="14" alt="The hand's web app: connection status, one slider per finger, presets for all open, half and all closed, a limp button and a play-animation button.">
+<p align="center">
+  <img src="docs/how-it-works.svg" width="720" alt="Flow: on the phone, the camera feeds MediaPipe, which finds 21 hand points in 3D and turns them into finger curl from 0 to 100 percent. That goes over Wi-Fi on a secure WebSocket about 30 times a second to the ESP32-S3 on the hand, which converts it to servo angles, drives five servos with PWM, and the servos pull the fingers with strings.">
+</p>
 
 1. **Tracking** (`web/index.html`): MediaPipe finds 21 points on your hand in
    3D. Each finger's curl is the sum of its joint bend angles, ignoring
@@ -62,6 +55,11 @@ flowchart LR
 3. **Firmware** (`firmware/esp32_hand`): converts each percentage to a servo
    angle within that finger's limits and drives the servo with the ESP32's
    hardware PWM.
+
+<p align="center">
+  <img src="docs/app.jpg" width="250" alt="The hand's web app: connection status, one slider per finger, presets for all open, half and all closed, a limp button and a play-animation button.">
+  <br><sub>The app the hand serves</sub>
+</p>
 
 ## Engineering challenges
 
