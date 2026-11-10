@@ -15,7 +15,7 @@ five servos that pull each finger closed.
 
 ## Highlights
 
-- **Camera control, no glove:** finger curl is computed from 3D hand landmarks
+- **Camera control:** finger curl is computed from 3D hand landmarks
   in the phone's browser, then smoothed and calibrated per finger.
 - **The hand hosts its own app:** the ESP32-S3 runs a Wi-Fi hotspot and serves
   the web app over HTTPS, with live control over a secure WebSocket.
@@ -25,7 +25,7 @@ five servos that pull each finger closed.
   watchdog opens the hand if the phone disconnects, and the servos go limp
   after a minute of no commands.
 - **Feedback:** a buzzer for start-up and connection sounds, and a status light
-  that breathes while waiting and stays solid while a phone is connected.
+  that pulses while waiting and stays solid while a phone is connected.
 
 <table>
   <tr>
@@ -65,16 +65,26 @@ flowchart LR
 
 ## Engineering challenges
 
-> **TODO (Joe):** rewrite these in your own words. They're the most interesting part for a reader.
-
-- **A servo library bug:** with the popular ESP32Servo library the fingers
-  didn't move independently. Reading the chip's pin routing directly showed
-  the library was sending several servos' signals to the same output. Replaced
-  it with direct hardware PWM. Details in
+- **A servo library bug:** with the ESP32Servo library the fingers
+  didn't move independently, and attempting to move one finger moved many. 
+  Reading the chip's pin routing directly showed the library was sending 
+  several servos' signals to the same output. Replaced it with direct 
+  hardware PWM. Details in
   [`firmware/diagnostics`](firmware/diagnostics/README.md).
-- **Camera vs. local network:** an HTTPS page can't talk to plain `ws://`, and
-  a plain HTTP page can't use the camera. The fix was to serve everything from
-  the ESP32 itself over TLS.
+- **Camera vs. local network:** browsers only allow the camera on secure
+  (HTTPS) pages, but a secure page can't talk to an insecure device like the
+  hand. Hosting the app online failed for exactly that reason, so the ESP32
+  now serves the app itself over HTTPS. That needs a certificate the phone
+  trusts, which is hard for a device with no internet:
+  - A self-signed certificate worked but showed a security warning, and
+    browsers then refused to cache the app for offline use.
+  - The fix was a real certificate for my own domain, `hand.joeprojects.com`.
+    I proved I own the domain with a DNS check, pointed the name at the
+    hand's local address (192.168.4.1), and made the hand's built-in DNS
+    server answer that name for phones on its Wi-Fi. Phones now open the
+    page with no warning.
+  - The certificate is stored in the ESP32's flash, separate from the
+    firmware, so renewing it just means re-uploading one file.
 - **Fitting a neural network on a microcontroller's flash:** the app,
   MediaPipe's WebAssembly runtime and the model are gzipped into 75% of a
   12 MB partition and served with download progress.
