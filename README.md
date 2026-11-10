@@ -94,10 +94,14 @@ flowchart LR
 | --- | --- |
 | ESP32-S3 DevKitC-1 (N16R8) | 16 MB flash, 8 MB PSRAM |
 | 5 × MG90S servos | thumb GPIO 4, index 5, middle 6, ring 7, pinky 15 |
-| 5 V 5 A wall adapter | powers the servos and the ESP32 through the power switch |
+| 5 V 5 A AC-to-DC adapter | 5.5 × 2.5 mm barrel plug into a screw-terminal adapter; powers the servos and the ESP32 through the power switch |
 | Passive piezo buzzer | GPIO 17 |
-| Panel button with LED ring | LED on GPIO 16 through an S8050 transistor |
-| **TODO** | power supply rating, strings, screws, approximate total cost |
+| Panel button with LED ring | latching power switch; LED on GPIO 16 through an S8050 transistor |
+| Breadboard and passives | 1000 µF capacitor across the supply, 330 Ω resistor, jumper wires |
+| Braided fishing line | the tendons: each servo pulls its finger closed |
+| 2 mm elastic cord | runs through the fingers and springs them back open |
+
+About $80 in parts, plus the 3D-printing filament.
 
 <p align="center">
   <img src="docs/wiring.svg" width="640" alt="Schematic: a 5 V 5 A adapter on screw terminal J1 feeds +5 V through power switch SW1, with C1 (1000 µF) across the supply. U1, the ESP32-S3-DevKitC-1, drives servos M1 to M5 (MG90S, thumb to pinky) from GPIO 4, 5, 6, 7 and 15. GPIO 16 switches D1, the switch's LED ring, through R1 (330 Ω) and transistor Q1 (S8050). GPIO 17 drives buzzer BZ1.">
