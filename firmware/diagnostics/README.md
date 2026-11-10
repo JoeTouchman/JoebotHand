@@ -1,8 +1,7 @@
 # Diagnostic sketches
 
 Small standalone sketches written while bringing up the ESP32-S3 and chasing
-down a servo bug. None of them are needed to run the hand; they're kept as a
-record of how the problem was found.
+down a servo bug. None of them are needed to run the hand.
 
 | Sketch | What it does |
 | --- | --- |
@@ -22,10 +21,9 @@ on the S3, ESP32Servo (v3.2.1) used the MCPWM peripheral and routed servos 1, 3
 and 5 to one output signal and 2 and 4 to another, while its own `getChannel()`
 still reported five distinct channels.
 
-The fix, in [`../esp32_hand`](../esp32_hand), drops the library and drives each
-servo directly with the core's LEDC PWM (`ledcAttach(pin, 50, 14)`), one channel
-per finger. At boot the firmware prints a channel map and flags any pin or
-channel collision, so this class of bug can't come back silently.
+The fix is in [`../esp32_hand`](../esp32_hand), which skips the library and drives each
+servo directly with the core's LEDC PWM (`ledcAttach(pin, 50, 14)`), giving every finger 
+one channel.
 
 `servo_test`, `pin_sweep_test` and `channel_report` still use ESP32Servo on
-purpose, since they reproduce the problem.
+purpose, since they were written to reproduce the problem.

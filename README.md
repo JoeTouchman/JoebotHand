@@ -80,10 +80,6 @@ flowchart LR
 - **Fitting a neural network on a microcontroller's flash:** the app,
   MediaPipe's WebAssembly runtime and the model are gzipped into 75% of a
   12 MB partition and served with download progress.
-- **Phones abandoning a network with no internet:** the ESP32 answers phones'
-  "is there internet?" checks so they stay connected to the hand.
-- **A quiet buzzer:** passive piezos are loudest near their resonance
-  (~4 kHz), so the sounds were retuned there.
 
 ## Hardware
 
@@ -107,6 +103,7 @@ About $80 in parts, plus the 3D-printing filament.
 
 <p align="center">
   <img src="docs/wiring.svg" width="640" alt="Schematic: a 5 V 5 A adapter on screw terminal J1 feeds +5 V through power switch SW1, with C1 (1000 µF) across the supply. U1, the ESP32-S3-DevKitC-1, drives servos M1 to M5 (MG90S, thumb to pinky) from GPIO 4, 5, 6, 7 and 15. GPIO 16 switches D1, the switch's LED ring, through R1 (330 Ω) and transistor Q1 (S8050). GPIO 17 drives buzzer BZ1.">
+  <br><sub>Wiring schematic</sub>
 </p>
 
 ### Forearm and stand iterations
@@ -134,7 +131,7 @@ About $80 in parts, plus the 3D-printing filament.
   Viral Science's
   [Arduino flex-sensor robot hand tutorial](https://www.viralsciencecreativity.com/post/arduino-flex-sensor-controlled-robot-hand).
 - **My additions:** a redesigned forearm with a button mount, an improved
-  stand, the wiring, the port from Arduino to ESP32-S3, camera tracking in
+  stand, the wiring, the change from Arduino to ESP32-S3, camera tracking in
   place of flex sensors, the self-hosted web app, and the buzzer and status light.
 - Hand tracking uses Google's [MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker).
 - Assisted by Claude Code for development, refactoring, and debugging.
@@ -169,4 +166,4 @@ Then join the `JOES-HAND` Wi-Fi on your phone and open the hand's address.
 
 ## License
 
-[MIT](LICENSE). The tutorial's hand design is not included here; see the link above.
+[MIT](LICENSE)
