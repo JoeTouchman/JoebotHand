@@ -118,10 +118,7 @@ flowchart LR
    and corrected dimensions.
 
 <p align="center">
-  <a href="hardware/forearm_v3.stl">
-    <img src="docs/forearm-v3-render.png" width="260" alt="3D render of the version 3 forearm: a slanted shell on a round base ring, with the button hole and a cutout for the wires.">
-  </a>
-  <br><sub>Version 3 model: <a href="hardware/forearm_v3.stl">open the STL</a> to rotate it in GitHub's 3D viewer</sub>
+  <img src="docs/forearm-v3-render.png" width="260" alt="3D render of the version 3 forearm: a slanted shell on a round base ring, with the button hole and a cutout for the wires.">
 </p>
 
 ## Credits and tools
