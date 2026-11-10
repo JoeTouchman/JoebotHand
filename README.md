@@ -49,7 +49,7 @@ flowchart LR
     E -- "strings" --> F[Fingers]
 ```
 
-<img src="docs/app.jpg" align="right" width="250" alt="The hand's web app: connection status, one slider per finger, presets for all open, half and all closed, a limp button and a play-animation button.">
+<img src="docs/app.jpg" align="right" width="250" hspace="14" alt="The hand's web app: connection status, one slider per finger, presets for all open, half and all closed, a limp button and a play-animation button.">
 
 1. **Tracking** (`web/index.html`): MediaPipe finds 21 points on your hand in
    3D. Each finger's curl is the sum of its joint bend angles, ignoring
@@ -94,22 +94,20 @@ flowchart LR
 | --- | --- |
 | ESP32-S3 DevKitC-1 (N16R8) | 16 MB flash, 8 MB PSRAM |
 | 5 × MG90S servos | thumb GPIO 4, index 5, middle 6, ring 7, pinky 15 |
-| Separate 5 V supply | for the servos, ground shared with the ESP32 |
+| 5 V 5 A wall adapter | powers the servos and the ESP32 through the power switch |
 | Passive piezo buzzer | GPIO 17 |
 | Panel button with LED ring | LED on GPIO 16 through an S8050 transistor |
 | **TODO** | power supply rating, strings, screws, approximate total cost |
 
 <p align="center">
-  <img src="docs/wiring.svg" width="880" alt="Schematic: a 5 V 5 A adapter on screw terminal J1 feeds +5 V through power switch SW1, with C1 (1000 µF) across the supply. U1, the ESP32-S3-DevKitC-1, drives servos M1 to M5 (MG90S, thumb to pinky) from GPIO 4, 5, 6, 7 and 15. GPIO 16 switches D1, the switch's LED ring, through R1 (330 Ω) and transistor Q1 (S8050). GPIO 17 drives buzzer BZ1.">
+  <img src="docs/wiring.svg" width="640" alt="Schematic: a 5 V 5 A adapter on screw terminal J1 feeds +5 V through power switch SW1, with C1 (1000 µF) across the supply. U1, the ESP32-S3-DevKitC-1, drives servos M1 to M5 (MG90S, thumb to pinky) from GPIO 4, 5, 6, 7 and 15. GPIO 16 switches D1, the switch's LED ring, through R1 (330 Ω) and transistor Q1 (S8050). GPIO 17 drives buzzer BZ1.">
 </p>
 
 ### Forearm and stand iterations
 
 <p align="center">
-  <img src="docs/forearm-versions.jpg" width="720" alt="Three 3D-printed forearms side by side: the original white one, a silver one with a round base and button hole, and the final version with a hollow base and wire cutouts.">
+  <img src="docs/forearm-versions.jpg" width="560" alt="Three 3D-printed forearms side by side, numbered 1 to 3: the original white one, a silver one with a round base and button hole, and the final version with a hollow base and wire cutouts.">
 </p>
-
-Left to right:
 
 1. **Original (white):** the plain forearm from the tutorial design.
 2. **Version 2:** my redesign. A solid round base so the hand stands on its
@@ -119,7 +117,12 @@ Left to right:
    servos have their full range of motion, with holes for the wires to exit
    and corrected dimensions.
 
-> **TODO (Joe):** your CAD (STL + source) → `hardware/`.
+<p align="center">
+  <a href="hardware/forearm_v3.stl">
+    <img src="docs/forearm-v3-render.png" width="260" alt="3D render of the version 3 forearm: a slanted shell on a round base ring, with the button hole and a cutout for the wires.">
+  </a>
+  <br><sub>Version 3 model: <a href="hardware/forearm_v3.stl">open the STL</a> to rotate it in GitHub's 3D viewer</sub>
+</p>
 
 ## Credits and tools
 
@@ -130,7 +133,7 @@ Left to right:
   stand, the wiring, the port from Arduino to ESP32-S3, camera tracking in
   place of flex sensors, the self-hosted web app, and the buzzer and status light.
 - Hand tracking uses Google's [MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker).
-- > **TODO (Joe):** your AI-assistance note, in your own words.
+- Assisted by Claude Code for development, refactoring, and debugging.
 
 ## Repository layout
 
@@ -142,6 +145,7 @@ Left to right:
 | [`firmware/diagnostics`](firmware/diagnostics) | Bring-up and debugging sketches |
 | [`firmware/uno_hand_v1`](firmware/uno_hand_v1) | Version 1: Arduino Uno over USB serial |
 | [`desktop`](desktop) | Python control panels from version 1, and a USB test tool for the ESP32 |
+| [`hardware`](hardware) | STL of my forearm and stand (version 3) |
 
 ## Building it
 
