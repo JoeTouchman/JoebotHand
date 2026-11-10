@@ -9,7 +9,12 @@ five servos that pull each finger closed.
   <img src="docs/hero.gif" width="640" alt="Left: the phone app tracking my hand through the camera. Right: the robotic hand copying the same pose.">
 </p>
 
-> Full video: **TODO YouTube link**
+<p align="center">
+  <a href="https://youtu.be/8RsPFerTg4E">
+    <img src="docs/video-thumbnail.jpg" width="560" alt="Watch the demo video on YouTube: the robotic hand on its stand.">
+  </a>
+  <br><sub>▶ Watch the full demo on YouTube</sub>
+</p>
 
 ## Highlights
 
@@ -36,8 +41,6 @@ five servos that pull each finger closed.
   </tr>
 </table>
 
-> **TODO (Joe):** still photos: finished hand, electronics close-up, phone app screenshot.
-
 ## How it works
 
 ```mermaid
@@ -48,6 +51,8 @@ flowchart LR
     D -- "50 Hz PWM, one channel per finger" --> E[5 servos]
     E -- "strings" --> F[Fingers]
 ```
+
+<img src="docs/app.jpg" align="right" width="250" alt="The hand's web app: connection status, one slider per finger, presets for all open, half and all closed, a limp button and a play-animation button.">
 
 1. **Tracking** (`web/index.html`): MediaPipe finds 21 points on your hand in
    3D. Each finger's curl is the sum of its joint bend angles, ignoring
@@ -100,6 +105,22 @@ flowchart LR
 <p align="center">
   <img src="docs/wiring.svg" width="880" alt="Schematic: a 5 V 5 A adapter on screw terminal J1 feeds +5 V through power switch SW1, with C1 (1000 µF) across the supply. U1, the ESP32-S3-DevKitC-1, drives servos M1 to M5 (MG90S, thumb to pinky) from GPIO 4, 5, 6, 7 and 15. GPIO 16 switches D1, the switch's LED ring, through R1 (330 Ω) and transistor Q1 (S8050). GPIO 17 drives buzzer BZ1.">
 </p>
+
+### Forearm and stand iterations
+
+<p align="center">
+  <img src="docs/forearm-versions.jpg" width="720" alt="Three 3D-printed forearms side by side: the original white one, a silver one with a round base and button hole, and the final version with a hollow base and wire cutouts.">
+</p>
+
+Left to right:
+
+1. **Original (white):** the plain forearm from the tutorial design.
+2. **Version 2:** my redesign. A solid round base so the hand stands on its
+   own, a press fit so the hand slides on and off easily, and a hole for the
+   power button.
+3. **Version 3 (current):** the base is hollowed out (still round) so the
+   servos have their full range of motion, with holes for the wires to exit
+   and corrected dimensions.
 
 > **TODO (Joe):** your CAD (STL + source) → `hardware/`.
 
