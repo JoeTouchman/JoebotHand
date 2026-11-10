@@ -7,8 +7,8 @@
 #   BUILD_ONLY=1 ./upload_fs.sh   build + size report only
 #
 # Sources: web/index.html and web/sw.js, MediaPipe from tracking/vendor
-# (tracking/fetch_vendor.sh), and the hand_landmarker.task model.
-# Close finger_test.py / any serial monitor before flashing.
+# and the hand_landmarker.task model (both fetched by tracking/fetch_vendor.sh).
+# Close desktop/finger_test.py / any serial monitor before flashing.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -21,7 +21,9 @@ TOOLS="$HOME/Library/Arduino15/packages/esp32/tools"
 MKLITTLEFS=$(ls "$TOOLS"/mklittlefs/*/mklittlefs | tail -1)
 ESPTOOL=$(ls "$TOOLS"/esptool_py/*/esptool | tail -1)
 
-[ -f "$MP/wasm/vision_wasm_internal.wasm" ] || "$ROOT/tracking/fetch_vendor.sh"
+MODEL="$ROOT/tracking/vendor/hand_landmarker.task"
+
+[ -f "$MP/wasm/vision_wasm_internal.wasm" ] && [ -f "$MODEL" ] || "$ROOT/tracking/fetch_vendor.sh"
 
 # source file : path on the hand. Only the SIMD wasm build is shipped; every
 # current phone browser supports WebAssembly SIMD.
@@ -30,7 +32,7 @@ FILES=(
   "$MP/vision_bundle.esm.js:mp/vision_bundle.esm.js"
   "$MP/wasm/vision_wasm_internal.js:mp/wasm/vision_wasm_internal.js"
   "$MP/wasm/vision_wasm_internal.wasm:mp/wasm/vision_wasm_internal.wasm"
-  "$ROOT/hand_landmarker.task:mp/hand_landmarker.task"
+  "$MODEL:mp/hand_landmarker.task"
 )
 VERSION=$(for f in "${FILES[@]}" "$ROOT/web/sw.js:"; do cat "${f%%:*}"; done | shasum | cut -c1-12)
 

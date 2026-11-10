@@ -163,7 +163,7 @@ async function loadMediaPipe() {
 
 // Local copy first (same file as Google's float16/1 model), hosted copy as fallback.
 const MODEL_URLS = [
-  '../hand_landmarker.task',
+  './vendor/hand_landmarker.task',
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
 ];
 const STORE_KEY = 'handTrackingHarness.v1';

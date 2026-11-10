@@ -31,7 +31,7 @@ FINGERS = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
 PINS = [3, 5, 6, 9, 10]
 _DIR = os.path.dirname(os.path.abspath(__file__))
 CAL_FILE = os.path.join(_DIR, "hand_cal.json")
-MODEL_FILE = os.path.join(_DIR, "hand_landmarker.task")
+MODEL_FILE = os.path.join(_DIR, "..", "tracking", "vendor", "hand_landmarker.task")
 SETTINGS_FILE = os.path.join(_DIR, "hand_settings.json")
 DEFAULT_SETTINGS = {"emote": True}
 
@@ -143,7 +143,7 @@ class TrackerThread(QThread):
             self.failed.emit(f"Tracking libraries failed to load: {e}")
             return
         if not os.path.exists(MODEL_FILE):
-            self.failed.emit("hand_landmarker.task model file is missing")
+            self.failed.emit("hand_landmarker.task model file is missing - run tracking/fetch_vendor.sh")
             return
         self._cv2 = cv2
         landmarker = vision.HandLandmarker.create_from_options(

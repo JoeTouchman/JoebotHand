@@ -1,4 +1,4 @@
-// Robotic Hand - 5 servo controller (ESP32-S3 port of hand_servos.ino)
+// Robotic Hand - 5 servo controller (ESP32-S3 port of firmware/uno_hand_v1)
 //
 // Wiring (servo signal wires):
 //   Thumb  -> GPIO 4
@@ -235,7 +235,7 @@ const int PULSE_MAX = 2400;
 // backwards - that's intended, don't normalize it. The finger is never
 // driven outside [openAngle, closedAngle].
 //
-// Measured 2026-09-15 as slider % on the old hand_cal.json scale
+// Measured 2026-09-15 as slider % on the old desktop/hand_cal.json scale
 // (start -> end), converted with angle = start + pct * (end - start).
 struct FingerCal { int pin; int openAngle; int closedAngle; };
 
@@ -411,8 +411,20 @@ void printInfo() {
 //
 // The servers run on their own tasks, so their handlers only store the
 // newest frame; loop() is the only place that moves servos.
-const char *AP_SSID = "JOES-HAND";
-const char *AP_PASS = "joebotics";   // WPA2 needs at least 8 characters
+//
+// Hotspot name and password. The real password lives in wifi_secrets.h next
+// to this file (gitignored); copy wifi_secrets.example.h to start one.
+#if __has_include("wifi_secrets.h")
+#include "wifi_secrets.h"
+#endif
+#ifndef HAND_AP_SSID
+#define HAND_AP_SSID "JOES-HAND"
+#endif
+#ifndef HAND_AP_PASS
+#define HAND_AP_PASS "change-me-please"  // WPA2 needs at least 8 characters
+#endif
+const char *AP_SSID = HAND_AP_SSID;
+const char *AP_PASS = HAND_AP_PASS;
 const char *FS_PARTITION = "ffat";   // the fatflash scheme's 12 MB data partition
 const uint32_t WATCHDOG_MS = 2000;   // open the hand after this long without a phone message
 const IPAddress AP_IP(192, 168, 4, 1);

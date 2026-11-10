@@ -1,6 +1,6 @@
 """Robotic Hand control panel (browser-based).
 
-Run with:  python3 hand_control.py
+Run with:  python3 hand_control_web.py
 
 It auto-connects to the Arduino and opens the control page in your
 web browser. Ctrl-C to quit.
@@ -239,7 +239,7 @@ async function flush() {
     const j = await r.json();
     setStatus(j.ok, j.ok ? 'Connected' : 'Arduino not found — is it plugged in?');
   } catch (e) {
-    setStatus(false, 'Server stopped — rerun hand_control.py');
+    setStatus(false, 'Server stopped — rerun hand_control_web.py');
   }
   inflight = false;
   flush();
@@ -256,7 +256,7 @@ async function calSet(i, which, v) {
     refreshLabels(i);
     setStatus(true, `${FINGERS[i]} ${which} point: ${v}° (saved)`);
   } catch (e) {
-    setStatus(false, 'Server stopped — rerun hand_control.py');
+    setStatus(false, 'Server stopped — rerun hand_control_web.py');
   }
 }
 
@@ -281,7 +281,7 @@ async function reverse(i) {
     refreshLabels(i);
     setStatus(true, `${FINGERS[i]} direction reversed (saved)`);
   } catch (e) {
-    setStatus(false, 'Server stopped — rerun hand_control.py');
+    setStatus(false, 'Server stopped — rerun hand_control_web.py');
   }
 }
 

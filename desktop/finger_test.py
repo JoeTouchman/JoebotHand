@@ -4,7 +4,7 @@ Run with:  python3 finger_test.py
 
 Opens a page with one slider per finger: 0% = fully open, 100% = fully
 closed. The sliders send percentages; the ESP32 firmware
-(hand_servos_esp32) holds each finger's calibrated open/closed servo
+(firmware/esp32_hand) holds each finger's calibrated open/closed servo
 angles and clamps to them, so every slider means "how curled is this
 finger" the same way. Ctrl-C to quit.
 """

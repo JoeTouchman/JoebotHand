@@ -12,7 +12,7 @@
   play the startup animation; the hand reports its position back.
 
   Build + flash (gzips everything into the ESP32's flash):
-      ESP32/hand_servos_esp32/upload_fs.sh
+      firmware/esp32_hand/upload_fs.sh
   Local preview (from the repo root): python3 -m http.server 8765
   then open http://localhost:8765/web/
 
@@ -613,7 +613,7 @@ const MP_SOURCES = [
   { bundle: './mp/vision_bundle.esm.js', wasm: './mp/wasm', model: './mp/hand_landmarker.task' },
   // local preview from the repo (tracking/fetch_vendor.sh)
   { bundle: `../tracking/vendor/tasks-vision-${MP_VERSION}/vision_bundle.esm.js`,
-    wasm: `../tracking/vendor/tasks-vision-${MP_VERSION}/wasm`, model: '../hand_landmarker.task' },
+    wasm: `../tracking/vendor/tasks-vision-${MP_VERSION}/wasm`, model: '../tracking/vendor/hand_landmarker.task' },
   // online fallback
   { bundle: `${MP_CDN}/vision_bundle.mjs`, wasm: `${MP_CDN}/wasm`,
     model: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task' },
