@@ -2,7 +2,7 @@
   <title>How the hand works</title>
 
   <!-- ===== Lane: phone ===== -->
-  <rect x="12" y="12" width="300" height="462" fill="none" stroke="#6c8ebf" stroke-width="1.5"/>
+  <rect x="12" y="12" width="300" height="462" fill="#ffffff" stroke="#6c8ebf" stroke-width="1.5"/>
   <rect x="12" y="12" width="300" height="40" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
   <text x="162" y="38" font-size="18" font-weight="bold" text-anchor="middle" fill="#000000">Phone (web app)</text>
 
@@ -19,7 +19,7 @@
   <text x="162" y="419" font-size="15" text-anchor="middle" fill="#333333">per finger, 0–100%</text>
 
   <!-- ===== Lane: hand ===== -->
-  <rect x="472" y="12" width="300" height="462" fill="none" stroke="#82b366" stroke-width="1.5"/>
+  <rect x="472" y="12" width="300" height="462" fill="#ffffff" stroke="#82b366" stroke-width="1.5"/>
   <rect x="472" y="12" width="300" height="40" fill="#d5e8d4" stroke="#82b366" stroke-width="1.5"/>
   <text x="622" y="38" font-size="18" font-weight="bold" text-anchor="middle" fill="#000000">Robotic hand</text>
 
