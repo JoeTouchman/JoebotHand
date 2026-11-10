@@ -98,7 +98,7 @@ flowchart LR
 | **TODO** | power supply rating, strings, screws, approximate total cost |
 
 <p align="center">
-  <img src="docs/wiring.svg" width="900" alt="Wiring diagram: a 5 V 5 A wall adapter feeds a screw terminal and the power switch into breadboard rails with a 1000 µF capacitor. The rails power the ESP32-S3 and five MG90S servos on GPIO 4, 5, 6, 7 and 15. GPIO 16 drives the switch's LED ring through a 330 Ω resistor and an S8050 transistor, and GPIO 17 drives a passive buzzer.">
+  <img src="docs/wiring.svg" width="880" alt="Schematic: a 5 V 5 A adapter on screw terminal J1 feeds +5 V through power switch SW1, with C1 (1000 µF) across the supply. U1, the ESP32-S3-DevKitC-1, drives servos M1 to M5 (MG90S, thumb to pinky) from GPIO 4, 5, 6, 7 and 15. GPIO 16 switches D1, the switch's LED ring, through R1 (330 Ω) and transistor Q1 (S8050). GPIO 17 drives buzzer BZ1.">
 </p>
 
 > **TODO (Joe):** your CAD (STL + source) → `hardware/`.
