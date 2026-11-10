@@ -1,15 +1,14 @@
 # JoebotHand
 
 A 3D-printed, five-finger robotic hand that copies your hand in real time.
-Point a phone at your hand: the hand's own web app tracks your fingers with
-MediaPipe and streams finger positions over Wi-Fi to an ESP32-S3, which drives
-five servos that pull each finger closed. No glove, no app install, and no
-internet needed.
+The hand's own web app tracks your fingers with MediaPipe and streams finger 
+positions over Wi-Fi to an ESP32-S3, which drives
+five servos that pull each finger closed. 
 
-> **TODO (Joe):** hero GIF here, the robot hand copying your hand. `docs/hero.gif`, under ~10 MB.
->
-> `![The hand mirroring a real hand](docs/hero.gif)`
->
+<p align="center">
+  <img src="docs/hero.gif" width="640" alt="Left: the phone app tracking my hand through the camera. Right: the robotic hand copying the same pose.">
+</p>
+
 > Full video: **TODO YouTube link**
 
 ## Highlights
@@ -26,7 +25,18 @@ internet needed.
 - **Feedback:** a buzzer for start-up and connection sounds, and a status light
   that breathes while waiting and stays solid while a phone is connected.
 
-> **TODO (Joe):** 2–4 photos in a row: finished hand, electronics, phone app screenshot, forearm/stand.
+<table>
+  <tr>
+    <td width="50%"><img src="docs/startup.gif" alt="Pressing the button on the stand: the hand plays its startup wave and the status light turns on."></td>
+    <td width="50%"><img src="docs/sliders.gif" alt="Moving a finger slider in the app on a tablet, and the robotic hand's finger following it."></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Press the button: startup chirp and finger wave</sub></td>
+    <td align="center"><sub>Manual control: one slider per finger</sub></td>
+  </tr>
+</table>
+
+> **TODO (Joe):** still photos: finished hand, electronics close-up, phone app screenshot.
 
 ## How it works
 
@@ -72,6 +82,11 @@ flowchart LR
   (~4 kHz), so the sounds were retuned there.
 
 ## Hardware
+
+<p align="center">
+  <img src="docs/inside.gif" width="560" alt="The hand lifted off the forearm, showing the five servos and their wiring inside.">
+  <br><sub>Inside the forearm: five servos pull a string for each finger</sub>
+</p>
 
 | Part | Notes |
 | --- | --- |

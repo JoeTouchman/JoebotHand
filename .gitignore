@@ -11,3 +11,5 @@ firmware/esp32_hand/certs.h
 firmware/esp32_hand/wifi_secrets.h
 # saved by desktop/hand_control.py
 desktop/hand_settings.json
+# raw videos and GIFs before compression (compressed copies live in docs/)
+media_drop/
