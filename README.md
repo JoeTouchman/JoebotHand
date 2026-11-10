@@ -10,10 +10,7 @@ five servos that pull each finger closed.
 </p>
 
 <p align="center">
-  <a href="https://youtu.be/8RsPFerTg4E">
-    <img src="docs/video-thumbnail.jpg" width="560" alt="Watch the demo video on YouTube: the robotic hand on its stand.">
-  </a>
-  <br><sub>▶ Watch the full demo on YouTube</sub>
+  <a href="https://youtu.be/8RsPFerTg4E">▶ Watch the full demo on YouTube</a>
 </p>
 
 ## Highlights
