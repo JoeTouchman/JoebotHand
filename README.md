@@ -97,7 +97,11 @@ flowchart LR
 | Panel button with LED ring | LED on GPIO 16 through an S8050 transistor |
 | **TODO** | power supply rating, strings, screws, approximate total cost |
 
-> **TODO (Joe):** wiring diagram or photo → `docs/wiring.png`. Your CAD (STL + source) → `hardware/`.
+<p align="center">
+  <img src="docs/wiring.svg" width="900" alt="Wiring diagram: a 5 V 5 A wall adapter feeds a screw terminal and the power switch into breadboard rails with a 1000 µF capacitor. The rails power the ESP32-S3 and five MG90S servos on GPIO 4, 5, 6, 7 and 15. GPIO 16 drives the switch's LED ring through a 330 Ω resistor and an S8050 transistor, and GPIO 17 drives a passive buzzer.">
+</p>
+
+> **TODO (Joe):** your CAD (STL + source) → `hardware/`.
 
 ## Credits and tools
 
